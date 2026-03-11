@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>WebRTC Doorbell</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #d0d0d0; overflow: hidden; }
+    #layout { display: flex; width: 100%; height: 100%; justify-content: center; position: relative; }
+    #video-container { position: relative; height: 100%; }
+    video { height: 100%; object-fit: contain; }
+    #dbg { position: absolute; top: 4px; left: 4px; color: lime; font: 11px monospace;
+           background: rgba(0,0,0,0.6); padding: 4px 6px; z-index: 10; white-space: pre;
+           display: none; }
+    #dbg.visible { display: block; }
+    #dbg-toggle { position: absolute; bottom: 6px; right: 6px; width: 28px; height: 28px;
+                  background: rgba(0,0,0,0.15); border: none; border-radius: 6px;
+                  color: rgba(0,0,0,0.4); font: 13px monospace; cursor: pointer;
+                  z-index: 20; line-height: 28px; text-align: center; }
+    #dbg-toggle:hover { background: rgba(0,0,0,0.3); color: #333; }
+    #sidebar { width: 200px; flex-shrink: 0; background: #c0c0c0; display: flex; flex-direction: column;
+               padding: 12px; gap: 10px; overflow-y: auto; justify-content: center; height: 100%; }
+    #sidebar h3 { color: #444; font: 13px sans-serif; margin: 0; text-align: center; }
+    #messages { display: flex; flex-direction: column; gap: 10px; }
+    .msg-btn { color: #fff; font: 14px sans-serif; background: #3a7bd5;
+               border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; padding: 14px 10px;
+               cursor: pointer; user-select: none; text-align: center; line-height: 1.3; }
+    .msg-btn:hover { background: #4a8be5; }
+    .msg-btn.playing { background: #2e8b57; }
+    #controls { display: flex; gap: 10px; justify-content: center; margin-top: 10px; }
+    .btn { color: #fff; font: 14px sans-serif; border: none; border-radius: 8px;
+           padding: 8px 0; width: 80px; text-align: center;
+           cursor: pointer; user-select: none; }
+    #talk { background: #c0392b; }
+    #talk.active { background: #27ae60; }
+    #mute { background: #555; }
+    #loading-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+                       background: #d0d0d0; display: flex; align-items: center; justify-content: center;
+                       z-index: 30; transition: opacity 0.3s ease; }
+    @keyframes doorbell-spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="loading-overlay">
+    <div style="text-align: center; color: #555;">
+      <div style="width: 48px; height: 48px; margin: 0 auto 16px;
+        border: 4px solid rgba(0,0,0,0.1); border-top-color: #3b82f6;
+        border-radius: 50%; animation: doorbell-spin 0.8s linear infinite;"></div>
+      <div style="font: 14px sans-serif;">Connecting to doorbell...</div>
+    </div>
+  </div>
+  <div id="layout">
+    <div id="video-container">
+      <div id="dbg">Starting...</div>
+      <video id="video" autoplay playsinline muted></video>
+    </div>
+    <div id="sidebar">
+      <h3>Quick Replies</h3>
+      <div id="messages"></div>
+      <div id="controls">
+        <div id="mute" class="btn">UNMUTE</div>
+        <div id="talk" class="btn">TALK</div>
+      </div>
+    </div>
+    <button id="dbg-toggle" title="Toggle debug overlay">i</button>
+  </div>
+<script>
+const params = new URLSearchParams(location.search);
+const stream = params.get('stream') || 'doorbell_sub';
+const go2rtc = params.get('go2rtc') || '/api/go2rtc';
+const showTalk = params.get('talk') !== '0';
+
+if (!showTalk) document.getElementById('talk').style.display = 'none';
+
+const dbg = document.getElementById('dbg');
+function log(msg) { dbg.textContent = msg; }
+
+document.getElementById('dbg-toggle').addEventListener('click', () => {
+  dbg.classList.toggle('visible');
+});
+
+const muteBtn = document.getElementById('mute');
+const video = document.getElementById('video');
+
+muteBtn.addEventListener('click', () => {
+  video.muted = !video.muted;
+});
+
+video.addEventListener('volumechange', () => {
+  muteBtn.textContent = video.muted ? 'UNMUTE' : 'MUTE';
+});
+
+const t0 = performance.now();
+const elapsed = () => ((performance.now() - t0) / 1000).toFixed(2);
+
+// Warm up: briefly open an MP4/MSE stream to trigger ffmpeg opus producer startup,
+// then abort. Times out after 3s so it doesn't block page load.
+const warmCtrl = new AbortController();
+const warmupTimeout = setTimeout(() => warmCtrl.abort(), 3000);
+const warmupDone2 = fetch(`${go2rtc}/api/stream.mp4?src=${stream}&audio=opus`, {
+  signal: warmCtrl.signal
+}).then(resp => {
+  clearTimeout(warmupTimeout);
+  warmCtrl.abort();
+  console.log(`[${elapsed()}s] Warmup stream started`);
+}).catch(() => { clearTimeout(warmupTimeout); });
+const warmupDone = Promise.race([warmupDone2, new Promise(r => setTimeout(r, 3000))]);
+
+async function connect() {
+  log(`[${elapsed()}s] Connecting...`);
+
+  const pc = new RTCPeerConnection({ iceServers: [] });
+
+  // Video: receive-only, H264 High only
+  const videoTx = pc.addTransceiver('video', { direction: 'recvonly' });
+  const videoCodecs = RTCRtpReceiver.getCapabilities('video')?.codecs || [];
+  const h264High = videoCodecs.filter(c =>
+    c.mimeType === 'video/H264' && c.sdpFmtpLine?.includes('profile-level-id=6400')
+  );
+  const h264Any = videoCodecs.filter(c => c.mimeType === 'video/H264');
+  videoTx.setCodecPreferences(h264High.length > 0 ? h264High : h264Any);
+
+  // Audio: 2-way (sendrecv) with a placeholder silent track
+  const silentCtx = new AudioContext();
+  const silentDest = silentCtx.createMediaStreamDestination();
+  const placeholderTrack = silentDest.stream.getAudioTracks()[0];
+  placeholderTrack.enabled = false;
+  const audioTx = pc.addTransceiver(placeholderTrack, { direction: 'sendrecv' });
+  const audioSender = audioTx.sender;
+
+  // --- Talk button ---
+  const talkBtn = document.getElementById('talk');
+  let micTrack = null;
+  let micRequested = false;
+
+  async function startTalking() {
+    if (!micRequested) {
+      micRequested = true;
+      try {
+        const micStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+        });
+        micTrack = micStream.getAudioTracks()[0];
+        await audioSender.replaceTrack(micTrack);
+      } catch (e) {
+        console.warn('No mic access:', e);
+        talkBtn.textContent = e.message || e.name;
+        talkBtn.style.background = 'rgba(200,200,0,0.7)';
+        return;
+      }
+    }
+    if (micTrack) {
+      micTrack.enabled = true;
+      talkBtn.classList.add('active');
+      talkBtn.textContent = 'TALKING';
+    }
+  }
+
+  function stopTalking() {
+    if (micTrack) micTrack.enabled = false;
+    talkBtn.classList.remove('active');
+    talkBtn.textContent = 'TALK';
+  }
+
+  talkBtn.addEventListener('mousedown', startTalking);
+  talkBtn.addEventListener('mouseup', stopTalking);
+  talkBtn.addEventListener('mouseleave', stopTalking);
+  talkBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startTalking(); });
+  talkBtn.addEventListener('touchend', stopTalking);
+
+  // --- Quick reply messages ---
+  let playingMessage = false;
+  const baseUrl = location.origin;
+
+  function playMessage(btn) {
+    if (playingMessage) return;
+    playingMessage = true;
+    btn.classList.add('playing');
+    (async () => {
+      try {
+        const audioCtx = new AudioContext();
+        const resp = await fetch(btn.dataset.audio);
+        const arrayBuf = await resp.arrayBuffer();
+        const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+
+        const source = audioCtx.createBufferSource();
+        source.buffer = audioBuf;
+        const dest = audioCtx.createMediaStreamDestination();
+        source.connect(dest);
+
+        const audioTrack = dest.stream.getAudioTracks()[0];
+        await audioSender.replaceTrack(audioTrack);
+        source.start();
+
+        source.onended = async () => {
+          await audioSender.replaceTrack(micTrack || placeholderTrack);
+          audioCtx.close();
+          btn.classList.remove('playing');
+          playingMessage = false;
+        };
+      } catch (e) {
+        console.error('Message playback failed:', e);
+        btn.classList.remove('playing');
+        playingMessage = false;
+      }
+    })();
+  }
+
+  function addMessageBtn(msg) {
+    const container = document.getElementById('messages');
+    const div = document.createElement('div');
+    div.className = 'msg-btn';
+    div.dataset.audio = msg.file;
+    div.textContent = msg.text;
+    div.addEventListener('click', () => playMessage(div));
+    container.appendChild(div);
+  }
+
+  fetch(`${baseUrl}/api/slots`).then(r => r.json()).then(msgs => {
+    msgs.forEach(addMessageBtn);
+  });
+
+  let firstFrameLogged = false;
+  video.addEventListener('playing', () => {
+    if (!firstFrameLogged) {
+      firstFrameLogged = true;
+      log(`[${elapsed()}s] First frame playing!`);
+      const overlay = document.getElementById('loading-overlay');
+      if (overlay) {
+        overlay.style.opacity = '0';
+        setTimeout(() => overlay.remove(), 300);
+      }
+      window.parent.postMessage('doorbell-video-playing', '*');
+    }
+  });
+
+  const remoteStream = new MediaStream();
+  video.srcObject = remoteStream;
+
+  pc.ontrack = (ev) => {
+    console.log(`Track received: ${ev.track.kind}`);
+    remoteStream.addTrack(ev.track);
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    console.log(`ICE state: ${pc.iceConnectionState}`);
+    if (pc.iceConnectionState === 'connected') log(`[${elapsed()}s] ICE connected`);
+    if (pc.iceConnectionState === 'failed') log(`[${elapsed()}s] ICE FAILED`);
+  };
+
+  // Wait for warmup to finish (ffmpeg opus producer started) before negotiating
+  await warmupDone;
+
+  log(`[${elapsed()}s] Creating offer...`);
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  const sdpBody = pc.localDescription.sdp;
+  console.log(`[${elapsed()}s] SDP offer: ${sdpBody.length} bytes`);
+
+  const fetchStart = performance.now();
+  const resp = await fetch(`${go2rtc}/api/webrtc?src=${stream}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/sdp' },
+    body: sdpBody
+  });
+  const fetchMs = (performance.now() - fetchStart).toFixed(0);
+  console.log(`[${elapsed()}s] Fetch took ${fetchMs}ms`);
+
+  if (!resp.ok) {
+    log(`[${elapsed()}s] go2rtc error: ${resp.status} ${await resp.text()}`);
+    return;
+  }
+
+  const answer = await resp.text();
+  log(`[${elapsed()}s] Got answer, setting remote description...`);
+  await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+
+  // --- Stats overlay ---
+  let frameCount = 0, lastFpsTime = performance.now(), currentFps = 0;
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+    function countFrame(now) {
+      frameCount++;
+      const dt = now - lastFpsTime;
+      if (dt >= 1000) {
+        currentFps = Math.round(frameCount * 1000 / dt);
+        frameCount = 0;
+        lastFpsTime = now;
+      }
+      video.requestVideoFrameCallback(countFrame);
+    }
+    video.requestVideoFrameCallback(countFrame);
+  }
+
+  setInterval(async () => {
+    const stats = await pc.getStats();
+    let rtt = '-', jitter = '-', packetsLost = 0, packetsRecv = 0;
+    let candidatePairType = '';
+
+    stats.forEach(report => {
+      if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+        rtt = report.currentRoundTripTime ? (report.currentRoundTripTime * 1000).toFixed(0) : '-';
+        const local = stats.get(report.localCandidateId);
+        const remote = stats.get(report.remoteCandidateId);
+        if (local && remote) candidatePairType = `${local.candidateType}->${remote.candidateType}`;
+      }
+      if (report.type === 'inbound-rtp' && report.kind === 'video') {
+        packetsLost = report.packetsLost || 0;
+        packetsRecv = report.packetsReceived || 0;
+        jitter = report.jitter ? (report.jitter * 1000).toFixed(1) : '-';
+      }
+    });
+
+    let audioInPkts = 0, audioOutPkts = 0;
+    stats.forEach(report => {
+      if (report.type === 'inbound-rtp' && report.kind === 'audio') audioInPkts = report.packetsReceived || 0;
+      if (report.type === 'outbound-rtp' && report.kind === 'audio') audioOutPkts = report.packetsSent || 0;
+    });
+
+    const lossPercent = packetsRecv > 0 ? ((packetsLost / (packetsRecv + packetsLost)) * 100).toFixed(2) : '0';
+    const res = `${video.videoWidth}x${video.videoHeight}`;
+    const senderTrack = audioSender.track;
+    const micInfo = senderTrack ? `enabled=${senderTrack.enabled} sent=${audioOutPkts}pkts` : 'no track';
+    log(`${res} | FPS: ${currentFps} | RTT: ${rtt}ms | Jitter: ${jitter}ms | Loss: ${lossPercent}%\nPath: ${candidatePairType}\nAudio in: ${audioInPkts}pkts | Mic: ${micInfo}`);
+  }, 1000);
+}
+
+connect().catch(e => log(`Error: ${e.message}`));
+</script>
+</body>
+</html>

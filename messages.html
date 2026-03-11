@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Doorbell Messages</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a1a; color: #fff; font-family: sans-serif; padding: 20px; max-width: 700px; margin: 0 auto; }
+    h1 { font-size: 20px; margin-bottom: 4px; color: #ccc; }
+    .subtitle { color: #777; font-size: 13px; margin-bottom: 16px; }
+    h2 { font-size: 16px; color: #aaa; margin: 20px 0 10px; border-bottom: 1px solid #333; padding-bottom: 6px; }
+    .slot-list, .clip-list { display: flex; flex-direction: column; gap: 6px; }
+    .item { display: flex; align-items: center; gap: 10px; background: #222; border: 1px solid #444;
+            border-radius: 6px; padding: 10px 14px; }
+    .item .text { flex: 1; font-size: 14px; }
+    .item .id { color: #666; font-size: 12px; }
+    .item button { font: 13px sans-serif; border: none; border-radius: 4px; padding: 5px 10px;
+                   cursor: pointer; color: #fff; }
+    .play-btn { background: #0066cc; }
+    .play-btn:hover { background: #0077ee; }
+    .play-btn.playing { background: #0a0; }
+    .remove-btn { background: #933; }
+    .remove-btn:hover { background: #b44; }
+    .add-slot-btn { background: #070; }
+    .add-slot-btn:hover { background: #090; }
+    .delete-btn { background: #933; }
+    .delete-btn:hover { background: #b44; }
+    .move-btn { background: #555; font-size: 16px !important; padding: 3px 8px !important; }
+    .move-btn:hover { background: #777; }
+    #add-form { display: flex; gap: 8px; margin-top: 20px; border-top: 1px solid #333; padding-top: 16px; }
+    #add-form input { flex: 1; font: 15px sans-serif; padding: 8px 10px; border-radius: 4px;
+                      border: 1px solid #555; background: #222; color: #fff; }
+    #add-form button { font: 15px sans-serif; padding: 8px 16px; border-radius: 4px; border: none;
+                       background: #0066cc; color: #fff; cursor: pointer; white-space: nowrap; }
+    #add-form button:hover { background: #0077ee; }
+    #add-form button:disabled { background: #555; cursor: default; }
+    .empty { color: #666; font-style: italic; padding: 12px 0; }
+    .slot-num { color: #0af; font-weight: bold; min-width: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Doorbell Quick Reply Messages</h1>
+  <p class="subtitle">Manage clips and assign them to doorbell page slots</p>
+
+  <h2>Doorbell Slots</h2>
+  <div id="slots" class="slot-list"></div>
+
+  <h2>All Clips</h2>
+  <div id="clips" class="clip-list"></div>
+
+  <div id="add-form">
+    <input id="msg-text" type="text" placeholder="Type a message to generate...">
+    <button id="msg-add">Add Clip</button>
+  </div>
+<script>
+const baseUrl = location.origin;
+let allMessages = [];
+let slotIds = [];
+let currentAudio = null;
+
+function stopAudio() {
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+}
+
+function playPreview(btn, file) {
+  stopAudio();
+  const audio = new Audio(file);
+  currentAudio = audio;
+  btn.textContent = 'Stop';
+  btn.classList.add('playing');
+  audio.play();
+  audio.onended = () => { btn.textContent = 'Play'; btn.classList.remove('playing'); currentAudio = null; };
+  btn.onclick = () => { stopAudio(); btn.textContent = 'Play'; btn.classList.remove('playing'); btn.onclick = () => playPreview(btn, file); };
+}
+
+async function saveSlots() {
+  await fetch(`${baseUrl}/api/slots`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(slotIds)
+  });
+}
+
+function renderSlots() {
+  const container = document.getElementById('slots');
+  container.innerHTML = '';
+  if (!slotIds.length) {
+    container.innerHTML = '<div class="empty">No slots assigned. Add clips from below.</div>';
+    return;
+  }
+  slotIds.forEach((id, i) => {
+    const msg = allMessages.find(m => m.id === id);
+    if (!msg) return;
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = `
+      <span class="slot-num">${i + 1}</span>
+      <span class="text">${msg.text} <span class="id">(${msg.id})</span></span>
+      <button class="play-btn">Play</button>
+      <button class="move-btn up">&#9650;</button>
+      <button class="move-btn down">&#9660;</button>
+      <button class="remove-btn">Remove</button>
+    `;
+    div.querySelector('.play-btn').addEventListener('click', function() { playPreview(this, msg.file); });
+    div.querySelector('.up').addEventListener('click', async () => {
+      if (i === 0) return;
+      [slotIds[i - 1], slotIds[i]] = [slotIds[i], slotIds[i - 1]];
+      await saveSlots(); renderSlots();
+    });
+    div.querySelector('.down').addEventListener('click', async () => {
+      if (i === slotIds.length - 1) return;
+      [slotIds[i], slotIds[i + 1]] = [slotIds[i + 1], slotIds[i]];
+      await saveSlots(); renderSlots();
+    });
+    div.querySelector('.remove-btn').addEventListener('click', async () => {
+      slotIds.splice(i, 1);
+      await saveSlots(); renderSlots(); renderClips();
+    });
+    container.appendChild(div);
+  });
+}
+
+function renderClips() {
+  const container = document.getElementById('clips');
+  container.innerHTML = '';
+  const unslotted = allMessages.filter(m => !slotIds.includes(m.id));
+  if (!unslotted.length && !allMessages.length) {
+    container.innerHTML = '<div class="empty">No clips yet. Generate one below.</div>';
+    return;
+  }
+  allMessages.forEach(msg => {
+    const inSlot = slotIds.includes(msg.id);
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.style.opacity = inSlot ? '0.5' : '1';
+    div.innerHTML = `
+      <span class="text">${msg.text} <span class="id">(${msg.id})</span></span>
+      <button class="play-btn">Play</button>
+      ${inSlot ? '<button class="add-slot-btn" disabled style="background:#555">In Slot</button>' : '<button class="add-slot-btn">Add to Slots</button>'}
+      <button class="delete-btn">Delete</button>
+    `;
+    div.querySelector('.play-btn').addEventListener('click', function() { playPreview(this, msg.file); });
+    if (!inSlot) {
+      div.querySelector('.add-slot-btn').addEventListener('click', async () => {
+        slotIds.push(msg.id);
+        await saveSlots(); renderSlots(); renderClips();
+      });
+    }
+    div.querySelector('.delete-btn').addEventListener('click', async () => {
+      if (!confirm(`Delete "${msg.text}"?`)) return;
+      await fetch(`${baseUrl}/api/messages/${msg.id}`, { method: 'DELETE' });
+      allMessages = allMessages.filter(m => m.id !== msg.id);
+      slotIds = slotIds.filter(s => s !== msg.id);
+      renderSlots(); renderClips();
+    });
+    container.appendChild(div);
+  });
+}
+
+async function loadAll() {
+  const [msgs, slots] = await Promise.all([
+    fetch(`${baseUrl}/api/messages`).then(r => r.json()),
+    fetch(`${baseUrl}/api/slots`).then(r => r.json())
+  ]);
+  allMessages = msgs;
+  slotIds = slots.map(s => s.id);
+  renderSlots();
+  renderClips();
+}
+
+loadAll();
+
+const addBtn = document.getElementById('msg-add');
+addBtn.addEventListener('click', async () => {
+  const input = document.getElementById('msg-text');
+  const text = input.value.trim();
+  if (!text) return;
+  addBtn.disabled = true;
+  addBtn.textContent = 'Generating...';
+  input.value = '';
+  try {
+    const resp = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    const msg = await resp.json();
+    allMessages.push(msg);
+    renderClips();
+  } catch (e) {
+    console.error('Failed to add:', e);
+  }
+  addBtn.disabled = false;
+  addBtn.textContent = 'Add Clip';
+});
+
+document.getElementById('msg-text').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') addBtn.click();
+});
+</script>
+</body>
+</html>

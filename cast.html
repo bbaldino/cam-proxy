@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Camera</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+    video { width: 100%; height: 100%; object-fit: contain; }
+    #dbg { position: absolute; top: 10px; left: 10px; color: lime; font: 14px monospace;
+           background: rgba(0,0,0,0.7); padding: 8px; z-index: 10; white-space: pre; }
+    #unmute { position: absolute; bottom: 20px; right: 20px; color: #fff; font: 16px sans-serif;
+              background: rgba(0,0,0,0.6); border: 2px solid #fff; border-radius: 8px;
+              padding: 8px 16px; z-index: 10; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="dbg">Starting...</div>
+  <div id="unmute">UNMUTE</div>
+  <video id="video" autoplay playsinline muted></video>
+<script>
+const params = new URLSearchParams(location.search);
+const stream = params.get('stream') || 'doorbell_sub';
+const dbg = document.getElementById('dbg');
+function log(msg) { dbg.textContent = msg; console.log(msg); }
+
+const unmuteBtn = document.getElementById('unmute');
+unmuteBtn.addEventListener('click', () => {
+  const video = document.getElementById('video');
+  video.muted = !video.muted;
+  unmuteBtn.textContent = video.muted ? 'UNMUTE' : 'MUTE';
+});
+
+function connect() {
+  const video = document.getElementById('video');
+  const t0 = performance.now();
+  const elapsed = () => ((performance.now() - t0) / 1000).toFixed(2);
+
+  const wsUrl = `ws://${location.host}/api/go2rtc/api/ws?src=${stream}`;
+  log(`[${elapsed()}s] Connecting...`);
+  const ws = new WebSocket(wsUrl);
+  ws.binaryType = 'arraybuffer';
+
+  let ms, sb, queue = [], sourceReady = false, firstFrameLogged = false;
+
+  video.addEventListener('playing', () => {
+    if (!firstFrameLogged) {
+      firstFrameLogged = true;
+      log(`[${elapsed()}s] First frame playing!`);
+    }
+  });
+
+  ws.onopen = () => {
+    log('WS connected, setting up MediaSource...');
+    ms = new MediaSource();
+    video.src = URL.createObjectURL(ms);
+
+    ms.addEventListener('sourceopen', () => {
+      log('MediaSource opened, sending MSE request...');
+      try {
+        ws.send(JSON.stringify({
+          type: 'mse',
+          value: 'avc1.640029,avc1.64002A,avc1.640033,hvc1.1.6.L153.B0,mp4a.40.2,mp4a.40.5,flac,opus'
+        }));
+      } catch (e) {
+        log(`Send failed: ${e.message}`);
+      }
+    });
+  };
+
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === 'string') {
+      // JSON message with codec info
+      const msg = JSON.parse(ev.data);
+      log(`Got: ${JSON.stringify(msg)}`);
+      if (msg.type === 'mse') {
+        const codecs = msg.value;
+        log(`Setting up MSE: ${codecs}`);
+        try {
+          sb = ms.addSourceBuffer(codecs);
+          sb.mode = 'segments';
+          sb.addEventListener('updateend', () => {
+            if (queue.length > 0 && !sb.updating) {
+              sb.appendBuffer(queue.shift());
+            }
+          });
+          sourceReady = true;
+          // Flush any queued data
+          if (queue.length > 0 && !sb.updating) {
+            sb.appendBuffer(queue.shift());
+          }
+        } catch (e) {
+          log(`addSourceBuffer FAILED: ${e.message}`);
+        }
+      }
+      return;
+    }
+
+    // Binary data - MP4 fragments
+    if (sourceReady && sb) {
+      if (sb.updating || queue.length > 0) {
+        queue.push(ev.data);
+      } else {
+        try {
+          sb.appendBuffer(ev.data);
+        } catch (e) {
+          console.error('appendBuffer error:', e);
+        }
+      }
+    } else {
+      queue.push(ev.data);
+    }
+  };
+
+  // FPS counter
+  let frameCount = 0, lastFpsTime = performance.now(), currentFps = 0;
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+    function countFrame(now) {
+      frameCount++;
+      const elapsed = now - lastFpsTime;
+      if (elapsed >= 1000) {
+        currentFps = Math.round(frameCount * 1000 / elapsed);
+        frameCount = 0;
+        lastFpsTime = now;
+      }
+      video.requestVideoFrameCallback(countFrame);
+    }
+    video.requestVideoFrameCallback(countFrame);
+  }
+
+  // Keep latency low and update stats overlay
+  setInterval(() => {
+    if (video.buffered.length > 0) {
+      const end = video.buffered.end(video.buffered.length - 1);
+      const behind = end - video.currentTime;
+      if (behind > 1.5) {
+        video.currentTime = end - 0.3;
+      }
+      // Trim buffer to keep only last 30s to avoid memory bloat
+      const start = video.buffered.start(0);
+      if (video.currentTime - start > 30) {
+        try {
+          if (!sb.updating) sb.remove(start, video.currentTime - 10);
+        } catch (e) {}
+      }
+      const bufSec = (end - (video.buffered.start(0))).toFixed(0);
+      log(`FPS: ${currentFps} | Latency: ${behind.toFixed(1)}s | Buf: ${bufSec}s`);
+    }
+  }, 1000);
+
+  ws.onclose = () => {
+    log('WebSocket closed, reconnecting in 3s...');
+    setTimeout(connect, 3000);
+  };
+
+  ws.onerror = (e) => {
+    log(`WebSocket ERROR: ${e.type || e}`);
+  };
+}
+
+connect();
+</script>
+</body>
+</html>
