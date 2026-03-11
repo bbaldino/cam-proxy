@@ -39,10 +39,17 @@
   </style>
 </head>
 <body>
-  <h1>Doorbell Quick Reply Messages</h1>
-  <p class="subtitle">Manage clips and assign them to doorbell page slots</p>
+  <h1>Doorbell Audio Manager</h1>
+  <p class="subtitle">Manage doorbell chime and quick reply messages</p>
 
-  <h2>Doorbell Slots</h2>
+  <h2>Doorbell Chime</h2>
+  <div id="chime-section" style="display: flex; align-items: center; gap: 10px; background: #222; border: 1px solid #444; border-radius: 6px; padding: 12px 14px; margin-bottom: 6px;">
+    <span style="color: #aaa; font-size: 14px;">Active chime:</span>
+    <select id="chime-select" style="flex: 1; font: 14px sans-serif; padding: 6px 8px; border-radius: 4px; border: 1px solid #555; background: #333; color: #fff;"></select>
+    <button id="chime-test" class="play-btn" style="font: 13px sans-serif; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer; color: #fff; background: #0066cc;">Test</button>
+  </div>
+
+  <h2>Quick Reply Slots</h2>
   <div id="slots" class="slot-list"></div>
 
   <h2>All Clips</h2>
@@ -57,6 +64,55 @@ const baseUrl = location.origin;
 let allMessages = [];
 let slotIds = [];
 let currentAudio = null;
+let currentChime = '';
+
+let allChimes = [];
+
+// --- Chime config ---
+async function loadChimeConfig() {
+  const config = await fetch(`${baseUrl}/api/chime-config`).then(r => r.json());
+  currentChime = config.file || '';
+}
+
+async function loadChimes() {
+  allChimes = await fetch(`${baseUrl}/api/chimes`).then(r => r.json());
+}
+
+function renderChimeSelect() {
+  const select = document.getElementById('chime-select');
+  select.innerHTML = '<option value="">(none)</option>';
+  allChimes.forEach(chime => {
+    const opt = document.createElement('option');
+    opt.value = chime.id;
+    opt.textContent = chime.name;
+    if (chime.id === currentChime) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+document.getElementById('chime-select').addEventListener('change', async (e) => {
+  currentChime = e.target.value;
+  await fetch(`${baseUrl}/api/chime-config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: currentChime })
+  });
+});
+
+document.getElementById('chime-test').addEventListener('click', async (btn) => {
+  const file = document.getElementById('chime-select').value;
+  if (!file) return;
+  const el = document.getElementById('chime-test');
+  el.textContent = 'Playing...';
+  el.style.background = '#0a0';
+  try {
+    await fetch(`${baseUrl}/api/chime?file=${file}`, { method: 'POST' });
+  } catch (e) {
+    console.error('Chime test failed:', e);
+  }
+  el.textContent = 'Test';
+  el.style.background = '#0066cc';
+});
 
 function stopAudio() {
   if (currentAudio) { currentAudio.pause(); currentAudio = null; }
@@ -160,10 +216,13 @@ function renderClips() {
 async function loadAll() {
   const [msgs, slots] = await Promise.all([
     fetch(`${baseUrl}/api/messages`).then(r => r.json()),
-    fetch(`${baseUrl}/api/slots`).then(r => r.json())
+    fetch(`${baseUrl}/api/slots`).then(r => r.json()),
+    loadChimeConfig(),
+    loadChimes(),
   ]);
   allMessages = msgs;
   slotIds = slots.map(s => s.id);
+  renderChimeSelect();
   renderSlots();
   renderClips();
 }

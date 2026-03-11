@@ -184,24 +184,28 @@ class RtspProxy:
             await self._server.wait_closed()
 
     async def inject_chime(self, filename):
-        """Play an audio file through the backchannel."""
+        """Play an audio file through the backchannel (legacy, looks in AUDIO_DIR)."""
+        filepath = os.path.join(AUDIO_DIR, filename)
+        return await self.inject_chime_path(filepath)
+
+    async def inject_chime_path(self, filepath):
+        """Play a .pcmu audio file through the backchannel."""
         if not self._active_session:
             return "No active RTSP session"
         if self._active_session.bc_channel_upstream is None:
             return "No backchannel established"
 
-        if filename not in self._chime_cache:
-            filepath = os.path.join(AUDIO_DIR, filename)
+        if filepath not in self._chime_cache:
             if not os.path.exists(filepath):
-                return f"File not found: {filename}"
+                return f"File not found: {filepath}"
             try:
-                self._chime_cache[filename] = convert_to_pcmu(filepath)
+                self._chime_cache[filepath] = convert_to_pcmu(filepath)
             except Exception as e:
                 return f"Conversion failed: {e}"
-            duration = len(self._chime_cache[filename]) / 8000
-            print(f"RTSP proxy: cached {filename} ({duration:.1f}s)")
+            duration = len(self._chime_cache[filepath]) / 8000
+            print(f"RTSP proxy: cached {filepath} ({duration:.1f}s)")
 
-        pcmu_data = self._chime_cache[filename]
+        pcmu_data = self._chime_cache[filepath]
         await self._active_session.play_chime(pcmu_data)
         return "ok"
 
@@ -210,6 +214,9 @@ class RtspProxy:
         print(f"RTSP proxy: new client from {addr}")
 
         if self._active_session:
+            if self._active_session._chime_playing:
+                print("RTSP proxy: chime playing, waiting for it to finish before accepting new client")
+                await self._active_session._chime_done.wait()
             print("RTSP proxy: closing previous session")
             await self._active_session.close()
 
@@ -265,6 +272,8 @@ class ProxySession:
 
         # Chime state
         self._chime_playing = False
+        self._chime_done = asyncio.Event()
+        self._chime_done.set()  # not playing initially
         self._chime_lock = asyncio.Lock()
         self._chime_ssrc = random.randint(0, 0xFFFFFFFF)
         self._chime_seq = 0
@@ -648,6 +657,7 @@ class ProxySession:
                 return
 
             self._chime_playing = True
+            self._chime_done.clear()
             try:
                 samples_per_packet = 160  # 20ms at 8kHz
                 offset = 0
@@ -690,6 +700,7 @@ class ProxySession:
                 print(f"RTSP proxy: chime done ({packet_num} packets)")
             finally:
                 self._chime_playing = False
+                self._chime_done.set()
 
     async def close(self):
         if self._closed:

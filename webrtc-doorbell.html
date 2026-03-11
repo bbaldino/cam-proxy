@@ -169,7 +169,7 @@ async function connect() {
   talkBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startTalking(); });
   talkBtn.addEventListener('touchend', stopTalking);
 
-  // --- Quick reply messages ---
+  // --- Quick reply messages (played via server-side RTSP backchannel) ---
   let playingMessage = false;
   const baseUrl = location.origin;
 
@@ -177,41 +177,24 @@ async function connect() {
     if (playingMessage) return;
     playingMessage = true;
     btn.classList.add('playing');
-    (async () => {
-      try {
-        const audioCtx = new AudioContext();
-        const resp = await fetch(btn.dataset.audio);
-        const arrayBuf = await resp.arrayBuffer();
-        const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
-
-        const source = audioCtx.createBufferSource();
-        source.buffer = audioBuf;
-        const dest = audioCtx.createMediaStreamDestination();
-        source.connect(dest);
-
-        const audioTrack = dest.stream.getAudioTracks()[0];
-        await audioSender.replaceTrack(audioTrack);
-        source.start();
-
-        source.onended = async () => {
-          await audioSender.replaceTrack(micTrack || placeholderTrack);
-          audioCtx.close();
-          btn.classList.remove('playing');
-          playingMessage = false;
-        };
-      } catch (e) {
+    fetch(`${baseUrl}/api/chime?file=${btn.dataset.msgId}`, { method: 'POST' })
+      .then(r => r.json())
+      .then(() => {
+        btn.classList.remove('playing');
+        playingMessage = false;
+      })
+      .catch(e => {
         console.error('Message playback failed:', e);
         btn.classList.remove('playing');
         playingMessage = false;
-      }
-    })();
+      });
   }
 
   function addMessageBtn(msg) {
     const container = document.getElementById('messages');
     const div = document.createElement('div');
     div.className = 'msg-btn';
-    div.dataset.audio = msg.file;
+    div.dataset.msgId = msg.id;
     div.textContent = msg.text;
     div.addEventListener('click', () => playMessage(div));
     container.appendChild(div);
