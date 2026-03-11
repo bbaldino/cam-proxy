@@ -14,6 +14,14 @@ GO2RTC = os.environ.get("GO2RTC_HOST", "localhost:1984")
 SERVE_DIR = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("PORT", "8899"))
 
+# RTSP proxy settings
+CAMERA_HOST = os.environ.get("CAMERA_HOST", "")
+CAMERA_PORT = int(os.environ.get("CAMERA_PORT", "554"))
+CAMERA_USER = os.environ.get("CAMERA_USER", "")
+CAMERA_PASS = os.environ.get("CAMERA_PASS", "")
+CAMERA_STREAM = os.environ.get("CAMERA_STREAM", "")
+RTSP_PROXY_PORT = int(os.environ.get("RTSP_PROXY_PORT", "8554"))
+
 
 async def ws_proxy(request):
     """Proxy WebSocket connections to go2rtc."""
@@ -239,12 +247,44 @@ async def common_middleware(request, handler):
     return resp
 
 
+async def play_chime(request):
+    """Play a chime audio file through the doorbell backchannel."""
+    proxy = request.app.get("rtsp_proxy")
+    if not proxy:
+        return web.json_response({"error": "RTSP proxy not configured"}, status=503)
+    filename = request.query.get("file", "")
+    if not filename:
+        return web.json_response({"error": "file parameter required"}, status=400)
+    result = await proxy.inject_chime(filename)
+    if result == "ok":
+        return web.json_response({"status": "ok", "file": filename})
+    return web.json_response({"error": result}, status=500)
+
+
 async def on_startup(app):
     app["client_session"] = aiohttp.ClientSession()
+    # Start RTSP proxy if configured
+    if CAMERA_HOST and CAMERA_STREAM:
+        from rtsp_proxy import RtspProxy
+        proxy = RtspProxy(
+            camera_host=CAMERA_HOST,
+            camera_port=CAMERA_PORT,
+            camera_user=CAMERA_USER,
+            camera_pass=CAMERA_PASS,
+            camera_stream=CAMERA_STREAM,
+            listen_port=RTSP_PROXY_PORT,
+        )
+        await proxy.start()
+        app["rtsp_proxy"] = proxy
+    else:
+        print("RTSP proxy: not configured (set CAMERA_HOST and CAMERA_STREAM)")
 
 
 async def on_cleanup(app):
     await app["client_session"].close()
+    proxy = app.get("rtsp_proxy")
+    if proxy:
+        await proxy.stop()
 
 app = web.Application(middlewares=[common_middleware])
 app.on_startup.append(on_startup)
@@ -255,6 +295,7 @@ app.router.add_post("/api/messages", create_message)
 app.router.add_delete("/api/messages/{name}", delete_message)
 app.router.add_get("/api/slots", get_slots)
 app.router.add_put("/api/slots", set_slots)
+app.router.add_post("/api/chime", play_chime)
 app.router.add_get("/api/go2rtc/api/ws", ws_proxy)
 app.router.add_route("*", "/api/go2rtc/{path:.*}", http_proxy)
 app.router.add_static("/", SERVE_DIR, show_index=True)
