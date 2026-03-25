@@ -11,9 +11,10 @@
     #video-container { position: relative; height: 100%; }
     video { height: 100%; object-fit: contain; }
     #dbg { position: absolute; top: 4px; left: 4px; color: lime; font: 11px monospace;
-           background: rgba(0,0,0,0.6); padding: 4px 6px; z-index: 10; white-space: pre;
+           background: rgba(0,0,0,0.6); padding: 4px 6px; z-index: 40; white-space: pre;
            display: none; }
     #dbg.visible { display: block; }
+    #dbg.always { display: block; }
     #dbg-toggle { position: absolute; bottom: 6px; right: 6px; width: 28px; height: 28px;
                   background: rgba(0,0,0,0.15); border: none; border-radius: 6px;
                   color: rgba(0,0,0,0.4); font: 13px monospace; cursor: pointer;
@@ -74,7 +75,16 @@ const showTalk = params.get('talk') !== '0';
 if (!showTalk) document.getElementById('talk').style.display = 'none';
 
 const dbg = document.getElementById('dbg');
-function log(msg) { dbg.textContent = msg; }
+const debugAlways = params.get('debug') === '1';
+if (debugAlways) dbg.classList.add('always');
+let setupLines = [];
+let statsText = '';
+function log(msg) { setupLines.push(msg); renderDbg(); }
+function setStats(msg) { statsText = msg; renderDbg(); }
+function renderDbg() {
+  const parts = setupLines.join('\n');
+  dbg.textContent = statsText ? parts + '\n---\n' + statsText : parts;
+}
 
 document.getElementById('dbg-toggle').addEventListener('click', () => {
   dbg.classList.toggle('visible');
@@ -94,18 +104,8 @@ video.addEventListener('volumechange', () => {
 const t0 = performance.now();
 const elapsed = () => ((performance.now() - t0) / 1000).toFixed(2);
 
-// Warm up: briefly open an MP4/MSE stream to trigger ffmpeg opus producer startup,
-// then abort. Times out after 3s so it doesn't block page load.
-const warmCtrl = new AbortController();
-const warmupTimeout = setTimeout(() => warmCtrl.abort(), 3000);
-const warmupDone2 = fetch(`${go2rtc}/api/stream.mp4?src=${stream}&audio=opus`, {
-  signal: warmCtrl.signal
-}).then(resp => {
-  clearTimeout(warmupTimeout);
-  warmCtrl.abort();
-  console.log(`[${elapsed()}s] Warmup stream started`);
-}).catch(() => { clearTimeout(warmupTimeout); });
-const warmupDone = Promise.race([warmupDone2, new Promise(r => setTimeout(r, 3000))]);
+// Warmup removed — ffmpeg opus producer is configured as a go2rtc source,
+// so it's already running by the time we connect.
 
 async function connect() {
   log(`[${elapsed()}s] Connecting...`);
@@ -232,24 +232,19 @@ async function connect() {
     if (pc.iceConnectionState === 'failed') log(`[${elapsed()}s] ICE FAILED`);
   };
 
-  // Wait for warmup to finish (ffmpeg opus producer started) before negotiating
-  await warmupDone;
-
   log(`[${elapsed()}s] Creating offer...`);
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
-
-  const sdpBody = pc.localDescription.sdp;
-  console.log(`[${elapsed()}s] SDP offer: ${sdpBody.length} bytes`);
+  log(`[${elapsed()}s] Offer created, sending to go2rtc...`);
 
   const fetchStart = performance.now();
   const resp = await fetch(`${go2rtc}/api/webrtc?src=${stream}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/sdp' },
-    body: sdpBody
+    body: pc.localDescription.sdp
   });
   const fetchMs = (performance.now() - fetchStart).toFixed(0);
-  console.log(`[${elapsed()}s] Fetch took ${fetchMs}ms`);
+  log(`[${elapsed()}s] go2rtc responded (${fetchMs}ms)`);
 
   if (!resp.ok) {
     log(`[${elapsed()}s] go2rtc error: ${resp.status} ${await resp.text()}`);
@@ -257,8 +252,9 @@ async function connect() {
   }
 
   const answer = await resp.text();
-  log(`[${elapsed()}s] Got answer, setting remote description...`);
+  log(`[${elapsed()}s] Setting remote description...`);
   await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+  log(`[${elapsed()}s] Remote description set, waiting for ICE...`);
 
   // --- Stats overlay ---
   let frameCount = 0, lastFpsTime = performance.now(), currentFps = 0;
@@ -305,7 +301,7 @@ async function connect() {
     const res = `${video.videoWidth}x${video.videoHeight}`;
     const senderTrack = audioSender.track;
     const micInfo = senderTrack ? `enabled=${senderTrack.enabled} sent=${audioOutPkts}pkts` : 'no track';
-    log(`${res} | FPS: ${currentFps} | RTT: ${rtt}ms | Jitter: ${jitter}ms | Loss: ${lossPercent}%\nPath: ${candidatePairType}\nAudio in: ${audioInPkts}pkts | Mic: ${micInfo}`);
+    setStats(`${res} | FPS: ${currentFps} | RTT: ${rtt}ms | Jitter: ${jitter}ms | Loss: ${lossPercent}%\nPath: ${candidatePairType}\nAudio in: ${audioInPkts}pkts | Mic: ${micInfo}`);
   }, 1000);
 }
 

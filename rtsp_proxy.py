@@ -270,6 +270,21 @@ class ProxySession:
         # SDP track info
         self._sdp_tracks = {}
 
+        # SETUP response cache: (url, transport) -> (status, fwd_headers, body)
+        # Workaround for go2rtc sender accumulation bug: go2rtc never removes
+        # closed senders from its internal list (see go2rtc Conn.Reconnect in
+        # pkg/rtsp/producer.go). Over time, each ffmpeg opus restart and WebRTC
+        # backchannel connection adds a sender. When go2rtc reconnects, it
+        # replays SETUP for every accumulated sender — all for the same track
+        # with the same parameters. After hours of uptime this can mean 90+
+        # identical SETUPs, each round-tripping to the camera (~150ms each),
+        # causing 15+ second connection times. Since SETUP for an already-setup
+        # track is idempotent (camera returns the same 200 OK), we cache the
+        # first successful response per (url, transport) and return it
+        # immediately for duplicates. See also:
+        # https://github.com/AlexxIT/go2rtc/pull/1431
+        self._setup_cache = {}
+
         # Chime state
         self._chime_playing = False
         self._chime_done = asyncio.Event()
@@ -406,50 +421,71 @@ class ProxySession:
         ds_transport = ds_headers.get("transport", "")
         ds_rtp_ch, ds_rtcp_ch = self._parse_interleaved(ds_transport)
 
-        self.us_cseq += 1
-        us_headers = {"Transport": ds_transport}
-        if self.us_session:
-            us_headers["Session"] = self.us_session
-        if self.realm and self.nonce:
-            us_headers["Authorization"] = make_digest_auth(
-                "SETUP", url, self.proxy.camera_user, self.proxy.camera_pass,
-                self.realm, self.nonce
-            )
+        cache_key = (url, ds_transport)
+        cached = self._setup_cache.get(cache_key)
 
-        self.us_writer.write(build_rtsp_request("SETUP", url, self.us_cseq, us_headers))
-        await self.us_writer.drain()
-        status, resp_headers, resp_body = await self._read_upstream_response_sequential()
+        if cached:
+            # Return cached response — see _setup_cache comment for why
+            status, fwd_headers, resp_body = cached
+            print(f"RTSP proxy: SETUP {url.rstrip('/').split('/')[-1]} "
+                  f"(cached, skipping camera round-trip)")
+        else:
+            # First time seeing this (url, transport) — forward to camera
+            self.us_cseq += 1
+            us_headers = {"Transport": ds_transport}
+            if self.us_session:
+                us_headers["Session"] = self.us_session
+            if self.realm and self.nonce:
+                us_headers["Authorization"] = make_digest_auth(
+                    "SETUP", url, self.proxy.camera_user, self.proxy.camera_pass,
+                    self.realm, self.nonce
+                )
 
-        if not self.us_session and "session" in resp_headers:
-            self.us_session = resp_headers["session"].split(";")[0]
+            self.us_writer.write(build_rtsp_request("SETUP", url, self.us_cseq, us_headers))
+            await self.us_writer.drain()
+            status, resp_headers, resp_body = await self._read_upstream_response_sequential()
 
-        us_transport = resp_headers.get("transport", "")
-        us_rtp_ch, us_rtcp_ch = self._parse_interleaved(us_transport)
+            if not self.us_session and "session" in resp_headers:
+                self.us_session = resp_headers["session"].split(";")[0]
 
-        # Build channel mapping
-        if ds_rtp_ch is not None and us_rtp_ch is not None:
-            self.ds_to_us_channel[ds_rtp_ch] = us_rtp_ch
-            self.us_to_ds_channel[us_rtp_ch] = ds_rtp_ch
-            if ds_rtcp_ch is not None and us_rtcp_ch is not None:
-                self.ds_to_us_channel[ds_rtcp_ch] = us_rtcp_ch
-                self.us_to_ds_channel[us_rtcp_ch] = ds_rtcp_ch
+            us_transport = resp_headers.get("transport", "")
+            us_rtp_ch, us_rtcp_ch = self._parse_interleaved(us_transport)
 
-            track_id = url.rstrip("/").split("/")[-1]
-            track_info = self._sdp_tracks.get(track_id, {})
-            direction = track_info.get("direction", "?")
-            print(f"RTSP proxy: SETUP {track_id}: "
-                  f"ds ch {ds_rtp_ch}-{ds_rtcp_ch} <-> "
-                  f"us ch {us_rtp_ch}-{us_rtcp_ch} ({direction})")
+            # Build channel mapping
+            if ds_rtp_ch is not None and us_rtp_ch is not None:
+                self.ds_to_us_channel[ds_rtp_ch] = us_rtp_ch
+                self.us_to_ds_channel[us_rtp_ch] = ds_rtp_ch
+                if ds_rtcp_ch is not None and us_rtcp_ch is not None:
+                    self.ds_to_us_channel[ds_rtcp_ch] = us_rtcp_ch
+                    self.us_to_ds_channel[us_rtcp_ch] = ds_rtcp_ch
 
-            if direction == "sendonly":
-                self.bc_channel_downstream = ds_rtp_ch
-                self.bc_channel_upstream = us_rtp_ch
-                print(f"RTSP proxy: backchannel detected! "
-                      f"ds={ds_rtp_ch} us={us_rtp_ch}")
+                track_id = url.rstrip("/").split("/")[-1]
+                track_info = self._sdp_tracks.get(track_id, {})
+                direction = track_info.get("direction", "?")
+                print(f"RTSP proxy: SETUP {track_id}: "
+                      f"ds ch {ds_rtp_ch}-{ds_rtcp_ch} <-> "
+                      f"us ch {us_rtp_ch}-{us_rtcp_ch} ({direction})")
+
+                if direction == "sendonly":
+                    self.bc_channel_downstream = ds_rtp_ch
+                    self.bc_channel_upstream = us_rtp_ch
+                    print(f"RTSP proxy: backchannel detected! "
+                          f"ds={ds_rtp_ch} us={us_rtp_ch}")
+
+            # Rewrite Transport header to reflect downstream channels
+            fwd_headers = self._filter_response_headers(resp_headers)
+            if ds_rtp_ch is not None and us_rtp_ch is not None and "Transport" in fwd_headers:
+                fwd_headers["Transport"] = self._rewrite_transport_interleaved(
+                    fwd_headers["Transport"], ds_rtp_ch, ds_rtcp_ch
+                )
+
+            # Cache successful responses for duplicate SETUP detection
+            if status == 200:
+                self._setup_cache[cache_key] = (status, fwd_headers, resp_body)
 
         resp = build_rtsp_response(
             status, "OK" if status == 200 else "Error", ds_cseq,
-            headers=self._filter_response_headers(resp_headers),
+            headers=fwd_headers,
             body=resp_body,
         )
         self.ds_writer.write(resp)
@@ -638,10 +674,19 @@ class ProxySession:
             return rtp, rtcp
         return None, None
 
+    @staticmethod
+    def _rewrite_transport_interleaved(transport_str, rtp_ch, rtcp_ch):
+        """Replace the interleaved= value in a Transport header."""
+        import re
+        new_val = f"interleaved={rtp_ch}-{rtcp_ch}"
+        if "interleaved=" in transport_str:
+            return re.sub(r'interleaved=\d+-\d+', new_val, transport_str)
+        return f"{transport_str};{new_val}"
+
     def _filter_response_headers(self, headers):
         result = {}
         for k, v in headers.items():
-            if k in ("www-authenticate",):
+            if k in ("www-authenticate", "cseq"):
                 continue
             if k == "session":
                 result["Session"] = v

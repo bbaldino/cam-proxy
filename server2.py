@@ -182,7 +182,7 @@ async def cast_trigger(request):
     return web.Response(text=result)
 
 
-AUDIO_DIR = os.path.join(SERVE_DIR, "audio")
+AUDIO_DIR = os.environ.get("AUDIO_DIR", os.path.join(SERVE_DIR, "audio"))
 CHIMES_DIR = os.path.join(AUDIO_DIR, "chimes")
 os.makedirs(AUDIO_DIR, exist_ok=True)
 os.makedirs(CHIMES_DIR, exist_ok=True)
