@@ -213,12 +213,18 @@ class RtspProxy:
         addr = writer.get_extra_info("peername")
         print(f"RTSP proxy: new client from {addr}")
 
-        if self._active_session:
-            if self._active_session._chime_playing:
+        # Capture the previous session in a local. Waiting on the chime below
+        # yields control, during which the previous session can end and set
+        # self._active_session = None (see the finally block); referring to the
+        # local avoids the `None.close()` crash that race used to cause.
+        # close() is idempotent, so closing an already-finished session is safe.
+        prev = self._active_session
+        if prev is not None:
+            if prev._chime_playing:
                 print("RTSP proxy: chime playing, waiting for it to finish before accepting new client")
-                await self._active_session._chime_done.wait()
+                await prev._chime_done.wait()
             print("RTSP proxy: closing previous session")
-            await self._active_session.close()
+            await prev.close()
 
         session = ProxySession(self, reader, writer)
         self._active_session = session
