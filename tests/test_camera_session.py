@@ -197,3 +197,27 @@ def test_send_to_camera_races_close_connection_without_raising():
     asyncio.run(scenario())  # must not raise AttributeError
     assert cs._writer is None
     assert fake_writer.closed is True
+
+
+def test_setup_and_play_urls_resolve_against_content_base():
+    # Reolink: DESCRIBE stream path differs from the track control base.
+    cs = CameraSession("192.168.2.8", 554, "u", "p", "h264Preview_01_sub")
+    cs._content_base = "rtsp://192.168.2.8/Preview_01_sub/"  # note: no port
+
+    # SETUP targets Content-Base + control, with the camera host:port forced on.
+    assert cs._control_url("track1") == "rtsp://192.168.2.8:554/Preview_01_sub/track1"
+    assert cs._control_url("track3") == "rtsp://192.168.2.8:554/Preview_01_sub/track3"
+    # PLAY targets the aggregate (Content-Base) URL.
+    assert cs._aggregate_url() == "rtsp://192.168.2.8:554/Preview_01_sub/"
+    # An absolute a=control value still gets the camera host:port forced.
+    assert (
+        cs._control_url("rtsp://192.168.2.8/Preview_01_sub/trackX")
+        == "rtsp://192.168.2.8:554/Preview_01_sub/trackX"
+    )
+
+
+def test_urls_fall_back_to_stream_path_without_content_base():
+    cs = CameraSession("192.168.2.8", 554, "u", "p", "h264Preview_01_sub")
+    cs._content_base = None
+    assert cs._control_url("track1") == "rtsp://192.168.2.8:554/h264Preview_01_sub/track1"
+    assert cs._aggregate_url() == "rtsp://192.168.2.8:554/h264Preview_01_sub"

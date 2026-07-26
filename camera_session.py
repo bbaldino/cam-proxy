@@ -12,6 +12,7 @@ consumer callbacks; the sendonly (backchannel) track is wired into a single
 owned `Backchannel` instance.
 """
 import asyncio
+import re
 import struct
 
 from rtsp_wire import (
@@ -61,6 +62,11 @@ class CameraSession:
         # RTSP state
         self._cseq = 0
         self._session_id = None
+        # Base URL for resolving track control URLs, from the DESCRIBE
+        # response's Content-Base/Content-Location header. The camera's track
+        # control path often differs from the DESCRIBE stream path (e.g.
+        # DESCRIBE h264Preview_01_sub -> Content-Base .../Preview_01_sub/).
+        self._content_base = None
 
     # -- consumer fan-out -------------------------------------------------
 
@@ -215,6 +221,7 @@ class CameraSession:
         self._realm = ""
         self._nonce = ""
         self._session_id = None
+        self._content_base = None
 
         await self._describe()
         await self._setup_all_tracks()
@@ -224,9 +231,15 @@ class CameraSession:
         self._cseq += 1
         return self._cseq
 
-    async def _send_request(self, method, headers=None):
-        """Send an RTSP request to the camera and return its response."""
-        url = self._url()
+    async def _send_request(self, method, headers=None, url=None):
+        """Send an RTSP request to the camera and return its response.
+
+        `url` defaults to the DESCRIBE stream URL; SETUP/PLAY pass the
+        Content-Base-derived track/aggregate URL. The digest auth is computed
+        over this same url, so both must match.
+        """
+        if url is None:
+            url = self._url()
         cseq = await self._next_cseq()
         us_headers = dict(headers or {})
         if self._session_id:
@@ -265,7 +278,36 @@ class CameraSession:
             raise ConnectionError(f"DESCRIBE failed: {status}")
 
         self.sdp = resp_body.decode("utf-8", errors="replace") if resp_body else ""
+        self._content_base = (
+            resp_headers.get("content-base") or resp_headers.get("content-location")
+        )
         self._parse_sdp_tracks(self.sdp)
+
+    def _force_camera_host(self, url):
+        """Rewrite the rtsp://host[:port] authority to the camera's host:port.
+
+        Content-Base often omits the port (rtsp://192.168.2.8/Preview_01_sub/);
+        the camera expects requests on its RTSP port. Mirrors the old proxy's
+        _rewrite_url_to_camera behavior.
+        """
+        return re.sub(r"rtsp://[^/]+", f"rtsp://{self.host}:{self.port}", url, count=1)
+
+    def _control_url(self, control):
+        """Resolve a track's a=control value to an absolute SETUP URL."""
+        if control.startswith("rtsp://"):
+            url = control
+        else:
+            base = self._content_base or (self._url() + "/")
+            if not base.endswith("/"):
+                base += "/"
+            url = base + control
+        return self._force_camera_host(url)
+
+    def _aggregate_url(self):
+        """The session/aggregate URL for PLAY (Content-Base if provided)."""
+        if self._content_base:
+            return self._force_camera_host(self._content_base)
+        return self._url()
 
     async def _setup_all_tracks(self):
         """SETUP each SDP track, assigning interleaved channels in SDP order.
@@ -277,10 +319,10 @@ class CameraSession:
         for index, (track_id, info) in enumerate(self.tracks.items()):
             rtp_ch = index * 2
             rtcp_ch = rtp_ch + 1
-            url = f"{self._url()}/{track_id}"
+            url = self._control_url(track_id)
             headers = {"Transport": f"RTP/AVP/TCP;unicast;interleaved={rtp_ch}-{rtcp_ch}"}
 
-            status, resp_headers, _ = await self._send_request("SETUP", headers)
+            status, resp_headers, _ = await self._send_request("SETUP", headers, url=url)
 
             if status != 200:
                 raise ConnectionError(f"SETUP {track_id} failed: {status}")
@@ -301,7 +343,7 @@ class CameraSession:
 
     async def _play(self):
         headers = {"Range": "npt=0.000-"}
-        status, _, _ = await self._send_request("PLAY", headers)
+        status, _, _ = await self._send_request("PLAY", headers, url=self._aggregate_url())
         if status != 200:
             raise ConnectionError(f"PLAY failed: {status}")
         print("CameraSession: negotiation complete, starting media pump")
