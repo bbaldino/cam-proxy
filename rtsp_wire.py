@@ -51,9 +51,14 @@ def build_rtsp_request(method, url, cseq, headers=None, body=b""):
     if headers:
         for k, v in headers.items():
             lines.append(f"{k}: {v}")
+    if body:
+        lines.append(f"Content-Length: {len(body)}")
     lines.append("")
     lines.append("")
-    return "\r\n".join(lines).encode()
+    result = "\r\n".join(lines).encode()
+    if body:
+        result += body
+    return result
 
 
 def parse_interleaved(transport):

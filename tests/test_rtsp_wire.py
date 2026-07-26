@@ -21,6 +21,17 @@ def test_parse_interleaved():
     assert parse_interleaved("RTP/AVP/TCP;interleaved=4-5") == (4, 5)
     assert parse_interleaved("RTP/AVP/TCP;interleaved=4") == (4, None)
 
+def test_build_rtsp_request_with_body():
+    # Test that body is properly included and Content-Length header is added
+    got = build_rtsp_request("PLAY", "rtsp://x", 1, body=b"abc")
+    assert b"Content-Length: 3" in got
+    assert got.endswith(b"abc")
+
+    # Test that without body there is no Content-Length header
+    got_no_body = build_rtsp_request("PLAY", "rtsp://x", 1)
+    assert b"Content-Length" not in got_no_body
+    assert not got_no_body.endswith(b"abc")
+
 class _FakeStream:
     def __init__(self, data): self._data = data
     async def read(self, n):
