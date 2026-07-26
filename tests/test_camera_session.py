@@ -62,3 +62,41 @@ def test_start_awaits_first_negotiation_before_returning():
         await cs.stop()
 
     asyncio.run(scenario())
+
+
+def test_start_closes_socket_on_failed_first_negotiation():
+    """A failed first negotiation must not leak the half-open socket — the
+    doorbell only tolerates one backchannel connection cleanly, so a
+    dangling connection here can break the next attempt.
+    """
+    cs = CameraSession("h", 554, "u", "p", "s")
+
+    class FakeWriter:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+        async def wait_closed(self):
+            pass
+
+    fake_writer = FakeWriter()
+
+    async def fake_negotiate_then_fail():
+        cs._writer = fake_writer
+        cs._reader = object()  # stand-in; only its None-ness is checked
+        raise ConnectionError("SETUP failed: 500")
+
+    cs._connect_and_negotiate = fake_negotiate_then_fail
+
+    async def scenario():
+        with pytest.raises(ConnectionError):
+            await cs.start()
+
+    asyncio.run(scenario())
+
+    assert fake_writer.closed is True
+    assert cs._writer is None
+    assert cs._reader is None
+    assert cs.running is False

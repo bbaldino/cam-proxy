@@ -103,7 +103,16 @@ class CameraSession:
         """
         if self.running:
             return
-        await self._connect_and_negotiate()
+        try:
+            await self._connect_and_negotiate()
+        except Exception:
+            # Don't leak a half-open socket on a failed first negotiation —
+            # the doorbell only tolerates one backchannel connection cleanly,
+            # so a dangling connection here can break the next attempt.
+            # (asyncio.CancelledError is a BaseException, not caught here —
+            # it propagates untouched, same as elsewhere in this class.)
+            await self._close_connection()
+            raise
         self.running = True
         self._task = asyncio.create_task(self._run_loop())
 
