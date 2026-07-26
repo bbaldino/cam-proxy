@@ -125,17 +125,22 @@ class ConsumerSession:
         track = self._tracks.get(track_id)
         transport = headers.get("transport", "")
         ds_rtp_ch, ds_rtcp_ch = parse_interleaved(transport)
+        cam_rtp_ch = track.get("rtp_channel") if track else None
 
-        if track is None or ds_rtp_ch is None:
+        if track is None or ds_rtp_ch is None or cam_rtp_ch is None:
+            # No such track, no channel requested, or (can happen with a
+            # snapshot taken mid camera reconnect) the camera hasn't
+            # actually assigned this track a channel yet. Reject rather
+            # than accepting a SETUP we can't route media for -- a silent
+            # 200 here would leave the consumer thinking it's set up with
+            # no way to self-heal.
             resp = build_rtsp_response(404, "Not Found", cseq)
             await self._write_downstream(resp)
             return
 
-        cam_rtp_ch = track.get("rtp_channel")
         cam_rtcp_ch = track.get("rtcp_channel")
 
-        if cam_rtp_ch is not None:
-            self._cam_to_ds_channel[cam_rtp_ch] = ds_rtp_ch
+        self._cam_to_ds_channel[cam_rtp_ch] = ds_rtp_ch
         if ds_rtcp_ch is not None and cam_rtcp_ch is not None:
             self._cam_to_ds_channel[cam_rtcp_ch] = ds_rtcp_ch
 
@@ -192,5 +197,16 @@ class ConsumerSession:
 
     async def _write_downstream(self, data):
         async with self._ds_write_lock:
-            self.ds_writer.write(data)
-            await self.ds_writer.drain()
+            try:
+                self.ds_writer.write(data)
+                await self.ds_writer.drain()
+            except ConnectionError:
+                # Covers ConnectionResetError/BrokenPipeError too (both are
+                # ConnectionError subclasses). A dead downstream writer is
+                # this consumer's problem alone -- it must never propagate
+                # out of _on_media, which CameraSession._deliver awaits
+                # directly. Letting it escape there would make one
+                # consumer's disconnect look like a camera-pump error and
+                # trigger a reconnect that churns the shared CameraSession
+                # for every other consumer. Tear this session down instead.
+                await self.close()

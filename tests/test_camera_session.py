@@ -24,6 +24,31 @@ def test_fanout_registry_delivers_to_all_consumers():
     assert got_a == [(0, b"vid")] and got_b[-1] == (0, b"vid2")
 
 
+def test_deliver_survives_a_raising_consumer_and_still_delivers_to_others():
+    """A consumer callback raising (e.g. its downstream writer died) must
+    not propagate out of _deliver -- _run_loop treats any exception from
+    the pump as a camera connection error and reconnects, which would
+    churn the shared camera for every other consumer over one dead
+    downstream. _deliver should log, drop the offending consumer, and
+    keep going."""
+    cs = CameraSession("h", 554, "u", "p", "s")
+    got_b = []
+
+    async def dies(ch, p):
+        raise ConnectionResetError("downstream gone")
+
+    async def b(ch, p):
+        got_b.append((ch, p))
+
+    cs.add_consumer(dies)
+    cs.add_consumer(b)
+
+    asyncio.run(cs._deliver(0, b"vid"))  # must not raise
+
+    assert got_b == [(0, b"vid")]
+    assert dies not in cs._consumers  # dropped after raising
+
+
 def test_parse_sdp_marks_backchannel_track():
     cs = CameraSession("h", 554, "u", "p", "s")
     sdp = (

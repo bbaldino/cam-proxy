@@ -72,7 +72,19 @@ class CameraSession:
 
     async def _deliver(self, channel, payload):
         for cb in list(self._consumers):
-            await cb(channel, payload)
+            try:
+                await cb(channel, payload)
+            except Exception as e:
+                # A misbehaving/disconnected consumer callback must never
+                # be mistaken for a camera-pump error -- that would trip
+                # _run_loop's reconnect path and churn the shared camera
+                # connection for every other consumer. Log, drop the
+                # offending consumer, and keep delivering to the rest.
+                # (asyncio.CancelledError is a BaseException, not caught
+                # here -- it propagates untouched, same as elsewhere in
+                # this class.)
+                print(f"CameraSession: consumer callback error, dropping consumer: {e}")
+                self._consumers.discard(cb)
 
     # -- backchannel sink ---------------------------------------------------
 
