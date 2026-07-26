@@ -12,6 +12,7 @@ Architecture:
                     cast-proxy server
 """
 import asyncio
+import contextlib
 import os
 import subprocess
 
@@ -64,6 +65,10 @@ class RtspProxy:
         self._camera = None
         self._consumers = set()
         self._teardown_task = None
+        # Serializes camera-lifecycle transitions (start in _ensure_camera,
+        # stop in _later) so a new consumer can never observe -- or race
+        # against -- a half-torn-down camera. See _ensure_camera/_later.
+        self._lifecycle_lock = asyncio.Lock()
 
     async def start(self):
         self._server = await asyncio.start_server(
@@ -76,6 +81,8 @@ class RtspProxy:
     async def stop(self):
         if self._teardown_task:
             self._teardown_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._teardown_task
             self._teardown_task = None
         for consumer in list(self._consumers):
             await consumer.close()
@@ -119,29 +126,42 @@ class RtspProxy:
     async def _ensure_camera(self):
         """Return the live camera session, (re)connecting it if needed.
 
-        Cancels any pending keep-warm teardown -- a new consumer (or chime)
-        arriving means the camera is wanted again, so the countdown to
-        `CameraSession.stop()` is moot.
+        Runs under `_lifecycle_lock`, and cancels any pending keep-warm
+        teardown only *after* acquiring it -- not before. That ordering
+        matters: if `_later()` (see `_schedule_teardown`) is still asleep or
+        waiting on this same lock, cancelling it here pre-empts it cleanly
+        before it ever touches the camera. But if `_later()` has already
+        acquired the lock and is mid-`CameraSession.stop()`, this call
+        blocks on the lock instead of racing in and cancelling that task --
+        so a teardown in flight always runs to completion (leaving
+        `self._camera` cleanly `None`) before we decide whether to build a
+        fresh one. Without this, cancelling `_later()` while it's inside
+        `stop()` would swallow the `CancelledError`, leave `self._camera`
+        pointing at a half-torn-down session, and hand that to the new
+        consumer.
         """
-        if self._teardown_task:
-            self._teardown_task.cancel()
-            self._teardown_task = None
-        if self._camera is None or not self._camera.running:
-            self._camera = CameraSession(
-                self.camera_host, self.camera_port,
-                self.camera_user, self.camera_pass, self.camera_stream,
-            )
-            await self._camera.start()
-        return self._camera
+        async with self._lifecycle_lock:
+            if self._teardown_task:
+                self._teardown_task.cancel()
+                self._teardown_task = None
+            if self._camera is None or not self._camera.running:
+                self._camera = CameraSession(
+                    self.camera_host, self.camera_port,
+                    self.camera_user, self.camera_pass, self.camera_stream,
+                )
+                await self._camera.start()
+            return self._camera
 
     def _schedule_teardown(self):
         """Start (or restart) the keep-warm countdown after the last consumer leaves."""
         async def _later():
             try:
                 await asyncio.sleep(self.KEEP_WARM_SECONDS)
-                if not self._consumers and self._camera:
-                    await self._camera.stop()
-                    self._camera = None
+                async with self._lifecycle_lock:
+                    if not self._consumers and self._camera:
+                        cam = self._camera
+                        self._camera = None
+                        await cam.stop()
             except asyncio.CancelledError:
                 pass
 
@@ -153,7 +173,17 @@ class RtspProxy:
         addr = writer.get_extra_info("peername")
         print(f"RTSP proxy: new client from {addr}")
 
-        camera = await self._ensure_camera()
+        try:
+            camera = await self._ensure_camera()
+        except Exception as e:
+            print(f"RTSP proxy: camera unavailable, dropping client {addr}: {e}")
+            with contextlib.suppress(Exception):
+                writer.close()
+                wait_closed = getattr(writer, "wait_closed", None)
+                if wait_closed:
+                    await wait_closed()
+            return
+
         session = ConsumerSession(camera, reader, writer)
         self._consumers.add(session)
         try:
