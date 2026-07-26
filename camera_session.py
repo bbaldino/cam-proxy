@@ -89,12 +89,17 @@ class CameraSession:
     # -- backchannel sink ---------------------------------------------------
 
     async def _send_to_camera(self, channel, payload):
-        if self._writer is None:
-            return
         frame = struct.pack(">cBH", b"$", channel, len(payload)) + payload
         async with self._write_lock:
-            self._writer.write(frame)
-            await self._writer.drain()
+            # Check INSIDE the lock: _close_connection also takes this lock
+            # before nulling self._writer, so the null-check and the write
+            # are atomic w.r.t. each other -- a drop can't sneak in between
+            # "writer looked non-None" and "writer.write() gets called".
+            w = self._writer
+            if w is None:
+                return
+            w.write(frame)
+            await w.drain()
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -182,13 +187,18 @@ class CameraSession:
             backoff = min(backoff * 2, _RECONNECT_BACKOFF_MAX)
 
     async def _close_connection(self):
-        if self._writer:
-            try:
-                self._writer.close()
-                await self._writer.wait_closed()
-            except Exception:
-                pass
-        self._writer = None
+        # Hold the write lock across close+null so this can't race a
+        # _send_to_camera write in flight (see _send_to_camera). Callers of
+        # _close_connection never hold _write_lock themselves, so this
+        # can't deadlock.
+        async with self._write_lock:
+            if self._writer:
+                try:
+                    self._writer.close()
+                    await self._writer.wait_closed()
+                except Exception:
+                    pass
+            self._writer = None
         self._reader = None
 
     # -- negotiation ----------------------------------------------------------

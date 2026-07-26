@@ -125,3 +125,75 @@ def test_start_closes_socket_on_failed_first_negotiation():
     assert cs._writer is None
     assert cs._reader is None
     assert cs.running is False
+
+
+def test_send_to_camera_after_close_returns_cleanly():
+    """A closed connection's writer is None -- _send_to_camera must check
+    for that under the same lock _close_connection uses to null it, so a
+    chime in flight during a camera drop no-ops instead of raising
+    AttributeError out of play_chime()/inject_chime_path().
+    """
+    cs = CameraSession("h", 554, "u", "p", "s")
+
+    class FakeWriter:
+        def close(self):
+            pass
+
+        async def wait_closed(self):
+            pass
+
+    cs._writer = FakeWriter()
+
+    async def scenario():
+        await cs._close_connection()
+        await cs._send_to_camera(4, b"x")  # must not raise AttributeError
+
+    asyncio.run(scenario())
+    assert cs._writer is None
+
+
+def test_send_to_camera_races_close_connection_without_raising():
+    """Reproduces the reported race directly: a chime loop's in-flight
+    _send_to_camera call holds the write lock (blocked in drain()); a
+    second _send_to_camera call is queued waiting for that same lock; a
+    concurrent _close_connection nulls the writer while the second call
+    is still queued. When the first write finishes and frees the lock,
+    the second call must not null-deref the now-closed writer -- the
+    None-check and the write have to be atomic w.r.t. the lock.
+    """
+    cs = CameraSession("h", 554, "u", "p", "s")
+    releaser = asyncio.Event()
+
+    class FakeWriter:
+        def __init__(self):
+            self.closed = False
+
+        def write(self, data):
+            pass
+
+        async def drain(self):
+            await releaser.wait()  # first write blocks here, holding the lock
+
+        def close(self):
+            self.closed = True
+
+        async def wait_closed(self):
+            pass
+
+    fake_writer = FakeWriter()
+    cs._writer = fake_writer
+
+    async def scenario():
+        first = asyncio.create_task(cs._send_to_camera(1, b"first"))
+        await asyncio.sleep(0)  # let `first` acquire the lock and block in drain()
+
+        second = asyncio.create_task(cs._send_to_camera(2, b"second"))
+        close_task = asyncio.create_task(cs._close_connection())
+        await asyncio.sleep(0)  # let `second` queue on the lock, `close` run/queue
+
+        releaser.set()  # unblock `first`'s drain(), freeing the lock
+        await asyncio.gather(first, second, close_task)
+
+    asyncio.run(scenario())  # must not raise AttributeError
+    assert cs._writer is None
+    assert fake_writer.closed is True
