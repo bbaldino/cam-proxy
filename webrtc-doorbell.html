@@ -291,16 +291,22 @@ async function connect() {
       }
     });
 
-    let audioInPkts = 0, audioOutPkts = 0;
+    let audioInPkts = 0, audioOutPkts = 0, micLevel = -1;
     stats.forEach(report => {
       if (report.type === 'inbound-rtp' && report.kind === 'audio') audioInPkts = report.packetsReceived || 0;
       if (report.type === 'outbound-rtp' && report.kind === 'audio') audioOutPkts = report.packetsSent || 0;
+      // media-source audioLevel = actual energy captured from the mic (0 = silence).
+      // This distinguishes a real mic track from a live-but-silent one (packets flow either way).
+      if (report.type === 'media-source' && report.kind === 'audio' && typeof report.audioLevel === 'number') {
+        micLevel = report.audioLevel;
+      }
     });
 
     const lossPercent = packetsRecv > 0 ? ((packetsLost / (packetsRecv + packetsLost)) * 100).toFixed(2) : '0';
     const res = `${video.videoWidth}x${video.videoHeight}`;
     const senderTrack = audioSender.track;
-    const micInfo = senderTrack ? `enabled=${senderTrack.enabled} sent=${audioOutPkts}pkts` : 'no track';
+    const lvlStr = micLevel >= 0 ? ` level=${micLevel.toFixed(3)}` : '';
+    const micInfo = senderTrack ? `enabled=${senderTrack.enabled} sent=${audioOutPkts}pkts${lvlStr}` : 'no track';
     setStats(`${res} | FPS: ${currentFps} | RTT: ${rtt}ms | Jitter: ${jitter}ms | Loss: ${lossPercent}%\nPath: ${candidatePairType}\nAudio in: ${audioInPkts}pkts | Mic: ${micInfo}`);
   }, 1000);
 }
