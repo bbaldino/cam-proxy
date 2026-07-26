@@ -87,9 +87,23 @@ class CameraSession:
     # -- lifecycle ----------------------------------------------------------
 
     async def start(self):
-        """Start the session task: negotiate, pump media, reconnect on drop."""
+        """Connect and run the first negotiation, then pump in the background.
+
+        Awaits the first DESCRIBE/SETUP/PLAY round-trip so that `self.sdp`,
+        `self.tracks`, and the backchannel channel are populated by the time
+        this returns — consumers (Task 4's `ConsumerSession`) can rely on
+        that. If the first negotiation fails, the exception propagates and
+        `self.running` stays False; the caller finds out immediately rather
+        than a retry-forever loop silently spinning with empty sdp/tracks.
+
+        Once the first negotiation succeeds, a background task takes over:
+        it pumps media and, if the connection later drops, reconnects with
+        capped backoff and re-negotiates (repopulating sdp/tracks) — that
+        recovery does not block this call.
+        """
         if self.running:
             return
+        await self._connect_and_negotiate()
         self.running = True
         self._task = asyncio.create_task(self._run_loop())
 
@@ -105,12 +119,13 @@ class CameraSession:
         await self._close_connection()
 
     async def _run_loop(self):
-        """Reconnect-with-backoff loop: connect, negotiate, pump; repeat on drop."""
-        backoff = _RECONNECT_BACKOFF_INITIAL
+        """Background: pump the (already-negotiated) connection.
+
+        On drop, reconnect with capped backoff and re-negotiate before
+        resuming the pump. Runs until `stop()` cancels it.
+        """
         while self.running:
             try:
-                await self._connect_and_negotiate()
-                backoff = _RECONNECT_BACKOFF_INITIAL  # reset after a clean negotiation
                 await self._pump()
             except asyncio.CancelledError:
                 raise
@@ -124,8 +139,25 @@ class CameraSession:
             if not self.running:
                 break
 
+            await self._reconnect_with_backoff()
+
+    async def _reconnect_with_backoff(self):
+        """Retry `_connect_and_negotiate` with capped exponential backoff
+        until it succeeds or `stop()` clears `self.running`."""
+        backoff = _RECONNECT_BACKOFF_INITIAL
+        while self.running:
             print(f"CameraSession: reconnecting in {backoff}s")
             await asyncio.sleep(backoff)
+            try:
+                await self._connect_and_negotiate()
+                return
+            except asyncio.CancelledError:
+                raise
+            except ConnectionError as e:
+                print(f"CameraSession: reconnect failed: {e}")
+            except Exception as e:
+                print(f"CameraSession: reconnect failed unexpectedly: {e}")
+            await self._close_connection()
             backoff = min(backoff * 2, _RECONNECT_BACKOFF_MAX)
 
     async def _close_connection(self):
