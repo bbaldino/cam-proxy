@@ -988,6 +988,18 @@ This is the acceptance criterion for the cast display, which receives no message
 
 Create `docs/theming.md` documenting, for someone in another repo who cannot read this code: the protocol (`doorbell:ready` with `contract`, `doorbell:style`, `doorbell:video-playing`), the containment tree, the variable list, the state hooks, and the four rules that bite — **origins must be https**, `data-doorbell-reply="<slug>"` is cosmetic only, layout must not assume a reply count, and `data-doorbell-reply-count="0"` hides the heading by rule so anyone overriding `display` must re-handle the empty case. Source the content from the spec's *DOM contract* and *Protocol* sections; do not re-derive it.
 
+Two things the doc must state that live nowhere else, both requested by the embedder:
+
+**A. The variable table is definitive, with defaults.** Twelve rows — the nine colours and three fonts — each with its default value copied from the `:root` block in `webrtc-doorbell.html`. The defaults are not a fallback; they are what the Chromecast display and the HA card actually render, so they are part of the published product. An embedder must be able to build against this table without reconstructing it from conversation.
+
+**B. Re-theming after a reload is the parent's job, and it is safe.** State plainly:
+
+> `doorbell:ready` is a top-level statement in the page's script, so it fires on **every** initialisation — first load, refresh, `src` change, or cache-busting `?v=` bump alike. The page contains no self-reload path (`location.reload`, `location.href`, and `location.replace` appear nowhere in it), so a reload only ever happens because the embedder caused one.
+>
+> Therefore: **send your CSS in response to every `doorbell:ready`, not just the first.** A parent that themes only once will come back unthemed after any reload, and nothing will report the failure.
+
+This closes the design's last silent failure mode, so it belongs in the doc rather than in a message thread.
+
 - [ ] **Step 5: Note the environment variable in the README**
 
 Add a `DOORBELL_THEME_ORIGINS` row to the existing `### Environment Variables` section (`README.md:36`): comma-separated origin allowlist for the theming channel, default `https://dashboard.baldino.me`, entries must be https (or localhost) or a parent frame there cannot host WebRTC at all.
