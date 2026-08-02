@@ -25,7 +25,7 @@ The result is a fixed light-grey page sitting inside dashboards with entirely
 different palettes. An iframe cannot inherit the parent's CSS, and the embed is
 cross-origin, so the parent cannot reach into the document either.
 
-### Secondary defect this fixes
+### Secondary defect this makes fixable (but does not itself fix)
 
 The dashboard's ring popup (`DoorbellRingModal.tsx`) mounts a *fresh* iframe on
 every doorbell press, over a black/90 scrim. The loading overlay is `#d0d0d0`
@@ -33,6 +33,28 @@ with an inline-styled spinner, so every ring produces a light-grey flash against
 black. Those pixels are currently unreachable by any stylesheet — the overlay's
 contents are inline `style="..."` attributes in the markup — which is why the
 flash was never fixable from either side.
+
+**Correction, recorded after implementation:** moving those pixels into real CSS
+is necessary but not sufficient, and an earlier draft of this spec wrongly
+claimed the flash was fixed here. `postMessage` cannot beat first paint — the
+overlay is in the initial HTML and paints at `--doorbell-bg`'s `#d0d0d0` default
+before any theme message can arrive. Making it *themeable* does not make it
+*themed in time*.
+
+The flash is therefore an embedder-side fix: the dashboard holds its iframe
+hidden, over its own dark container, until it has sent its first
+`doorbell:style`. That is the right home for it, because the page cannot know
+what is behind it — grey-on-black is a flash, while grey-on-grey (the Cameras
+tab, the HA card, the Chromecast) is nothing at all.
+
+A serve-time alternative was considered and declined: `server2.py` already
+rewrites the page to inject the allowlist, so it could equally accept colours as
+a query param and emit a `<style>` before first paint, fixing this for every
+embedder. Declined because it means a second theming channel beside
+`postMessage` — its own validation, docs, and precedence rules — plus
+URL-supplied values landing in a `<style>` block, all to spare the single
+current embedder a hide-until-themed sequence it offered to write. Revisit if a
+second embedder ever needs the same thing.
 
 ## Goals
 

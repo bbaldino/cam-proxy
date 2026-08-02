@@ -87,6 +87,26 @@ belt-and-braces measure, parents should also send their CSS on the iframe
 element's own `load` event, in addition to responding to `doorbell:ready`,
 so a themed reload doesn't depend on listener attach order.
 
+### There is no acknowledgement, and silence is ambiguous
+
+Nothing is posted back when a `doorbell:style` is applied — or when it is
+rejected. So from your side, these two are indistinguishable:
+
+- your CSS was accepted and the page is themed
+- your origin is not allowlisted, every payload was dropped, and the page is
+  streaming perfectly at its defaults
+
+The `console.warn` that explains the second case is emitted *inside* a
+cross-origin iframe, which you cannot read. The same is true if the page never
+loaded, or loaded from a URL variant that missed the allowlist injection.
+
+**The practical consequence:** if you gate anything on being themed — most
+obviously holding the iframe hidden to avoid an unthemed first paint against a
+dark backdrop — that gate must have a time-based fallback that reveals
+unconditionally. Otherwise a rejected origin, which is a *styling* failure,
+silently becomes an invisible camera, which is a *functional* one. Video should
+always win over styling.
+
 ### Contract versioning
 
 The contract version travels in the `doorbell:ready` message, not in the DOM.
