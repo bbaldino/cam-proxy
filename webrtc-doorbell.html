@@ -51,7 +51,7 @@
     /* (0,2,0) — deliberately outranks an embedder hiding [data-doorbell="debug"].
        To suppress diagnostics entirely, hide [data-doorbell="debug-toggle"] so
        the overlay can never be switched on. */
-    [data-doorbell="debug"][data-visible] { display: block; }
+    [data-doorbell="debug"][data-doorbell-visible] { display: block; }
 
     [data-doorbell="debug-toggle"] {
       position: absolute; bottom: 6px; right: 6px; width: 28px; height: 28px;
@@ -213,7 +213,7 @@ root.setAttribute('data-doorbell-talk', showTalk ? 'on' : 'off');
 
 const dbg = document.getElementById('dbg');
 const debugAlways = params.get('debug') === '1';
-if (debugAlways) dbg.setAttribute('data-visible', '');
+if (debugAlways) dbg.setAttribute('data-doorbell-visible', '');
 let setupLines = [];
 let statsText = '';
 function log(msg) { setupLines.push(msg); renderDbg(); }
@@ -224,7 +224,7 @@ function renderDbg() {
 }
 
 document.getElementById('dbg-toggle').addEventListener('click', () => {
-  dbg.toggleAttribute('data-visible');
+  dbg.toggleAttribute('data-doorbell-visible');
 });
 
 const muteBtn = document.getElementById('mute');

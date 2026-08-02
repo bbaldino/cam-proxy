@@ -340,7 +340,7 @@ Replace `webrtc-doorbell.html` lines 1–68 with:
     /* (0,2,0) — deliberately outranks an embedder hiding [data-doorbell="debug"].
        To suppress diagnostics entirely, hide [data-doorbell="debug-toggle"] so
        the overlay can never be switched on. */
-    [data-doorbell="debug"][data-visible] { display: block; }
+    [data-doorbell="debug"][data-doorbell-visible] { display: block; }
 
     [data-doorbell="debug-toggle"] {
       position: absolute; bottom: 6px; right: 6px; width: 28px; height: 28px;
@@ -522,13 +522,13 @@ root.setAttribute('data-doorbell-talk', showTalk ? 'on' : 'off');
 Replace `if (debugAlways) dbg.classList.add('always');` with:
 
 ```js
-if (debugAlways) dbg.setAttribute('data-visible', '');
+if (debugAlways) dbg.setAttribute('data-doorbell-visible', '');
 ```
 
 Replace the toggle handler body `dbg.classList.toggle('visible');` with:
 
 ```js
-dbg.toggleAttribute('data-visible');
+dbg.toggleAttribute('data-doorbell-visible');
 ```
 
 - [ ] **Step 4: Publish the mute state**

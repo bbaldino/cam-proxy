@@ -38,19 +38,23 @@ specificity.
 Every base rule that sets a **resting** appearance is a single
 class/attribute selector — specificity `(0,1,0)` — so the injected sheet,
 sitting at the same specificity, always wins there without needing
-`!important` or a specificity fight. Seven base rules that set a **state**
+`!important` or a specificity fight. **Eight** base rules that set a **state**
 appearance are two-attribute compounds — `(0,2,0)` — and these outrank a bare
-`(0,1,0)` override *while that state is active*:
+`(0,1,0)` override *while that state is active*. All eight, one per line:
 
-- `[data-doorbell="debug"][data-visible]`
-- `[data-doorbell="reply"][data-doorbell-playing]`
-- `[data-doorbell="talk"][data-doorbell-talking]`
-- `[data-doorbell="talk"][data-doorbell-mic="denied"]`
-- `[data-doorbell-talk="off"] [data-doorbell="talk"]`
-- `[data-doorbell-state="live"] [data-doorbell="overlay"]` (fading the loading
-  overlay out — see the containment tree for the removal that follows it)
-- the two `[data-doorbell-reply-count="0"]` rules (hiding the heading and the
-  replies container)
+```css
+[data-doorbell="debug"][data-doorbell-visible]
+[data-doorbell="reply"][data-doorbell-playing]
+[data-doorbell="talk"][data-doorbell-talking]
+[data-doorbell="talk"][data-doorbell-mic="denied"]
+[data-doorbell-talk="off"] [data-doorbell="talk"]
+[data-doorbell-state="live"] [data-doorbell="overlay"]
+[data-doorbell-reply-count="0"] [data-doorbell="replies-heading"]
+[data-doorbell-reply-count="0"] [data-doorbell="replies"]
+```
+
+(The `overlay` one fades the loading overlay out — see the containment tree for
+the removal that follows it.)
 
 These compounds are deliberate — each is commented in the base sheet
 explaining why — not oversights to be fixed. The reliable way to restyle one
@@ -242,6 +246,7 @@ legibility.
 | `data-doorbell-muted` | `[mute]` | present while muted |
 | `data-doorbell-mic="denied"` | `[talk]` | mic permission refused |
 | `data-doorbell-playing` | `[reply]` | present while that specific reply plays |
+| `data-doorbell-visible` | `[debug]` | present while the stats overlay is toggled on |
 
 These are hooks, not built-in styling — the base sheet publishes nearly all of
 them without applying a look, because the defaults are what the Chromecast
@@ -276,7 +281,7 @@ Four rules are easy to violate by accident. All four are load-bearing.
    there so you can vary layout *by* count, without ever hard-coding one.
 
 4. **State rules outrank a plain override while that state is active.** As
-   covered under *Protocol* above, six base rules that express a state are
+   covered under *Protocol* above, eight base rules that express a state are
    two-attribute compounds, which are more specific than a bare one-attribute
    override — this is a class of gotcha, not a single one. The
    reply-count-zero case is the worked example: the base sheet hides the
@@ -298,7 +303,7 @@ Four rules are easy to violate by accident. All four are load-bearing.
    (hidden), you must write your own `[data-doorbell-reply-count="0"]`-scoped
    rule; a plain override of `replies-heading` will not reach that case.
 
-   The same shape applies to the other six state rules: a plain override
+   The same shape applies to the other six state rules in that list: a plain override
    changes the resting look but is silently beaten the instant the state rule
    applies. Match the compound's specificity, or restyle via the CSS variable
    the state rule reads, rather than assuming a bare override reaches every
