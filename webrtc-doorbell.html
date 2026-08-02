@@ -168,6 +168,34 @@ const showTalk = params.get('talk') !== '0';
 const root = document.body;
 const setState = (s) => root.setAttribute('data-doorbell-state', s);
 
+// --- Theming channel (contract v1) ---
+// An embedder posts {type:'doorbell:style', css} and we inject it into a single
+// <style> appended last in <head>, so it wins ties by document order. With no
+// messages received the page keeps its defaults, which is the Chromecast path.
+const THEME_CONTRACT = 1;
+const THEME_ORIGINS = (
+  document.querySelector('meta[name="doorbell-theme-origins"]')?.content || ''
+).split(',').map(s => s.trim()).filter(Boolean);
+
+const overrideStyle = document.createElement('style');
+overrideStyle.id = 'doorbell-override';
+document.head.appendChild(overrideStyle);
+
+window.addEventListener('message', (ev) => {
+  const msg = ev.data;
+  // Check the type before the origin so unrelated cross-frame chatter does not
+  // fill the console with allowlist warnings.
+  if (!msg || typeof msg !== 'object' || msg.type !== 'doorbell:style') return;
+  if (!THEME_ORIGINS.includes(ev.origin)) {
+    console.warn(`[doorbell] ignoring doorbell:style from non-allowlisted origin: ${ev.origin}`);
+    return;
+  }
+  if (typeof msg.css !== 'string') return;
+  overrideStyle.textContent = msg.css;
+});
+
+window.parent.postMessage({ type: 'doorbell:ready', contract: THEME_CONTRACT }, '*');
+
 root.setAttribute('data-doorbell-talk', showTalk ? 'on' : 'off');
 
 const dbg = document.getElementById('dbg');
@@ -321,7 +349,7 @@ async function connect() {
       setState('live');
       const overlay = document.getElementById('loading-overlay');
       if (overlay) setTimeout(() => overlay.remove(), 300);
-      window.parent.postMessage('doorbell-video-playing', '*');
+      window.parent.postMessage({ type: 'doorbell:video-playing' }, '*');
     }
   });
 
