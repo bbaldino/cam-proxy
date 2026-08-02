@@ -569,6 +569,10 @@ Replace `addMessageBtn` and the fetch that drives it with:
     const container = document.getElementById('messages');
     const div = document.createElement('div');
     div.dataset.doorbell = 'reply';
+    // Internal lookup key, read by playMessage to build /api/chime?file=...
+    // Kept separate from the published hook below: that one is documented to
+    // embedders as free to change, and playback must not depend on it.
+    div.dataset.msgId = msg.id;
     // Cosmetic hook only: slugs are user-editable and a reply can be deleted
     // at any time, so layout must never depend on a specific one.
     div.dataset.doorbellReply = msg.id;
