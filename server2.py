@@ -9,6 +9,12 @@ from aiohttp import web
 import pychromecast
 from pychromecast.controllers.dashcast import DashCastController
 from gtts import gTTS
+from theme_origins import (
+    DEFAULT_THEME_ORIGINS,
+    inject_theme_origins,
+    insecure_origins,
+    parse_theme_origins,
+)
 
 GO2RTC = os.environ.get("GO2RTC_HOST", "localhost:1984")
 SERVE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -21,6 +27,17 @@ CAMERA_USER = os.environ.get("CAMERA_USER", "")
 CAMERA_PASS = os.environ.get("CAMERA_PASS", "")
 CAMERA_STREAM = os.environ.get("CAMERA_STREAM", "")
 RTSP_PROXY_PORT = int(os.environ.get("RTSP_PROXY_PORT", "8554"))
+
+# Origins permitted to post theming CSS into the doorbell page.
+THEME_ORIGINS = parse_theme_origins(
+    os.environ.get("DOORBELL_THEME_ORIGINS", DEFAULT_THEME_ORIGINS)
+)
+for _origin in insecure_origins(THEME_ORIGINS):
+    print(
+        f"WARNING: theme origin {_origin} is not a secure origin. A parent frame "
+        f"there cannot host WebRTC or microphone capture in the doorbell iframe, "
+        f"because a document nested in an insecure ancestor is not a secure context."
+    )
 
 
 async def ws_proxy(request):
@@ -469,6 +486,18 @@ async def on_cleanup(app):
     if proxy:
         await proxy.stop()
 
+DOORBELL_PAGE = os.path.join(SERVE_DIR, "webrtc-doorbell.html")
+
+
+async def serve_doorbell(request):
+    """Serve the doorbell page with the theming origin allowlist injected."""
+    with open(DOORBELL_PAGE, encoding="utf-8") as f:
+        html = f.read()
+    return web.Response(
+        text=inject_theme_origins(html, THEME_ORIGINS), content_type="text/html"
+    )
+
+
 app = web.Application(middlewares=[common_middleware])
 app.on_startup.append(on_startup)
 app.on_cleanup.append(on_cleanup)
@@ -484,6 +513,7 @@ app.router.add_put("/api/chime-config", set_chime_config)
 app.router.add_post("/api/chime", play_chime)
 app.router.add_get("/api/go2rtc/api/ws", ws_proxy)
 app.router.add_route("*", "/api/go2rtc/{path:.*}", http_proxy)
+app.router.add_get("/webrtc-doorbell.html", serve_doorbell)
 app.router.add_static("/", SERVE_DIR, show_index=True)
 
 if __name__ == "__main__":
