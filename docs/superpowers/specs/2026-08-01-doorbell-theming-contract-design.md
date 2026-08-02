@@ -93,10 +93,28 @@ positioning but never legibility.
 --doorbell-danger       #c0392b          talk idle
 --doorbell-success      #27ae60          talk active, reply playing
 --doorbell-border       rgba(0,0,0,0.1)  button borders
+
+--doorbell-font-body    sans-serif       everything except the two below
+--doorbell-font-display sans-serif       headings
+--doorbell-font-mono    monospace        stats overlay, numerals
 ```
 
 Hover and active shades derive from these via `color-mix()` rather than adding
 variables.
+
+**Fonts are variables, not inheritance.** Setting `font-family` on root and
+letting it cascade looks sufficient but is fragile: any descendant rule in the
+base sheet that sets `font-family` silently beats inheritance, and the embedder
+cannot see that it happened. Three variables are exposed instead, because the
+dashboard's `broadsheet` theme genuinely needs three faces (Newsreader display,
+Geist body, Geist Mono numerals). Correspondingly, **the base sheet sets
+`font-family` in exactly three places** — root to `--doorbell-font-body`, the
+headings to `--doorbell-font-display`, the stats overlay to
+`--doorbell-font-mono` — and nowhere else. Any other rule setting `font-family`
+is a bug.
+
+Font *files* still come from the embedder via `@font-face` in its payload; see
+*Secure context* for the https requirement.
 
 ## Protocol
 
@@ -175,30 +193,64 @@ rather than as the page's own styling, and an attribute selector has specificity
 sheet is injected last, it wins ties by document order, with no specificity arms
 race and no `!important` on either side.
 
-| Attribute | Element |
-|---|---|
-| `data-doorbell="root"` | page wrapper; background, font, scoping ancestor |
-| `data-doorbell="stage"` | wrapper around the video (**new** — none exists today) |
-| `data-doorbell="video"` | the `<video>` element |
-| `data-doorbell="sidebar"` | the panel |
-| `data-doorbell="replies-heading"` | "Quick Replies" heading |
-| `data-doorbell="replies"` | quick-reply container |
-| `data-doorbell="reply"` | each reply button |
-| `data-doorbell="controls"` | talk/mute container |
-| `data-doorbell="talk"` / `"mute"` | individual buttons |
-| `data-doorbell="overlay"` | loading overlay |
-| `data-doorbell="debug"` | the stats overlay |
+**The contract is a tree, not a list.** Layout rules are inherently about
+containment — `flex-direction` on a container, `order` and sizing on its
+children, `grid-template-areas` on whatever actually holds the video and the
+sidebar. An unlabeled wrapper anywhere on the path between two hooks is a dead
+spot the embedder cannot reach around. **Every element with a labeled descendant
+is itself labeled**, so the published tree is complete:
+
+```
+[root]                      <body>
+├── [overlay]               loading overlay
+│   └── [overlay-inner]     centering wrapper
+│       ├── [spinner]
+│       └── [overlay-text]  "Connecting to doorbell..."
+└── [layout]                the flex container  ← unlabeled today
+    ├── [stage]             wrapper around the video (new)
+    │   ├── [debug]         stats overlay
+    │   └── [video]         the <video> element
+    ├── [sidebar]           the panel
+    │   ├── [replies-heading]
+    │   ├── [replies]       quick-reply container
+    │   │   └── [reply] ×N  each reply button
+    │   └── [controls]      talk/mute container
+    │       ├── [mute]
+    │       └── [talk]
+    └── [debug-toggle]      the "i" button
+```
 
 `replies` and `controls` are deliberately separate containers so quick replies and
 talk/mute can be positioned independently — the ring modal wants the talk button
-prominent and the replies incidental.
+prominent and the replies incidental. `layout` and `debug-toggle` have no hooks in
+the current markup and gain them here; `debug` and `debug-toggle` are labelled so
+an embedder can hide the diagnostics in a household-facing embed rather than
+having that decided for it.
 
 State hooks, since connect/disconnect transitions are where foreign styling shows
 through:
 
-- `data-doorbell-state="loading|connecting|live|error"` on root
-- `data-doorbell-talking` on the talk button while transmitting
-- `data-doorbell-reply-count="N"` on the replies container
+| Hook | Element | Meaning |
+|---|---|---|
+| `data-doorbell-state="loading\|connecting\|live\|error"` | root | connection lifecycle |
+| `data-doorbell-talk="on\|off"` | root | whether `?talk=0` hid the talk button |
+| `data-doorbell-reply-count="N"` | replies **and** root | number of replies loaded |
+| `data-doorbell-talking` | talk button | present while transmitting |
+| `data-doorbell-muted` | mute button | present while muted |
+| `data-doorbell-mic="denied"` | talk button | mic permission refused |
+| `data-doorbell-playing` | reply button | present while that reply plays |
+
+`data-doorbell-talk` is on root rather than on the button because `controls`
+holding one child versus two is a different layout, and the embedder must be able
+to see which without inspecting DOM it cannot read. `data-doorbell-reply-count` is
+mirrored onto root so descendant selectors work without relying on `:has()`,
+which is not safely available on older Chromecast browsers.
+
+**There is no error-message element.** Mic-permission failures render as the talk
+button's own label (`webrtc-doorbell.html:148`), hooked by `data-doorbell-mic`.
+No separate notice element is introduced — inventing one would change visible
+behaviour beyond the scope of this change. Embedders should style the talk button
+for that state rather than expect text elsewhere.
 
 ### Genericity rules
 
@@ -214,8 +266,19 @@ later. The contract must therefore hold at N=0 as well as N=8:
 - **The count is exposed, not inferred.** `data-doorbell-reply-count` is `0` at
   load and updated when the fetch resolves, so an embedder can vary layout by
   count without inspecting DOM it cannot read.
-- **N=0 is a real state.** "Quick Replies" is currently unconditional markup and
-  would float over an empty container. Base CSS handles the empty case.
+- **N=0 is a real state, and the mechanism is published.** "Quick Replies" is
+  currently unconditional markup and would float over an empty container. The
+  elements stay in the DOM and are hidden by exactly one base rule:
+
+  ```css
+  [data-doorbell-reply-count="0"] [data-doorbell="replies-heading"],
+  [data-doorbell-reply-count="0"] [data-doorbell="replies"] { display: none; }
+  ```
+
+  Hidden-by-rule rather than removed-from-DOM matters to the embedder: setting
+  `display` on `replies-heading` for its own layout would otherwise resurrect a
+  heading floating over nothing. Anyone overriding `display` on those elements
+  must re-handle the zero case.
 - **Buttons wrap; they do not size the panel.** Reply text is user-authored and
   may be long.
 - **`data-doorbell-reply="<slug>"` is cosmetic, not load-bearing.** Slugs are
@@ -231,13 +294,20 @@ the failure is silent. Current uses:
 
 | Location | Use | Disposition |
 |---|---|---|
-| `:75` | `talk.style.display='none'` for `?talk=0` | attribute toggle |
-| `:149` | mic-error background | `data-doorbell-state="error"` + CSS |
-| `:214` | overlay `opacity=0` fade | **kept**, documented as the page's |
+| `:75` | `talk.style.display='none'` for `?talk=0` | `data-doorbell-talk="off"` on root |
+| `:149` | mic-error background | `data-doorbell-mic="denied"` on the talk button |
+| `:214` | overlay `opacity=0` fade | `data-doorbell-state="live"` + a CSS transition |
 | `:47-51` | overlay spinner + text, inline attrs in markup | moved to CSS |
 
 The `:47-51` block is the important one: it is the light-grey flash on the ring
 modal's black scrim, and it is unreachable by any stylesheet today.
+
+**No inline style survives.** An earlier draft kept the overlay's fade as the
+page's own, on the grounds that a transition value is not a theme value. Driving
+it from `data-doorbell-state="live"` instead costs nothing and removes the last
+element whose appearance an embedder could not reach — worth more than the
+distinction. The `setTimeout` that removes the overlay after the transition
+stays in JS.
 
 Base CSS drops to single-class/attribute specificity with no `!important`, or
 overrides do not reliably win. This refactor is the bulk of the work; the message
@@ -259,7 +329,12 @@ oversight — `doorbell-card.js` is the natural place to grow the same theming
 later, since HA exposes real theme variables the card could forward through this
 identical channel.
 
-The DOM contract consequently has two consumers, not one.
+The DOM contract consequently has two consumers, not one — and more importantly,
+**the base stylesheet is load-bearing for a viewport nobody is driving.** HA's
+card frames the page unthemed, so the defaults are what it renders. Defaults must
+therefore be tuned to stand alone, not fitted to whatever makes the dashboard's
+two embeds look right; the HA card is where that kind of regression would surface,
+silently and late.
 
 *Caveat:* `ha-config/` is not mounted in this checkout, so the HA findings above
 come from `ha-config-backup/` and from `doorbell-card.js` in this repo, not from
@@ -289,12 +364,25 @@ the copy deployed in HA's `www/`.
 - Messages from a non-allowlisted origin are ignored and warned.
 - Rendering is correct at 0, 1, and many replies, and when the count changes
   after load.
-- No inline style beyond the overlay fade survives, verified by inspection.
+- A payload setting `flex-direction` on `layout` moves the sidebar, confirming the
+  tree has no dead spots.
+- A payload overriding the three font variables changes all text, confirming no
+  stray `font-family` rule beats it.
+- Every state hook fires: mute toggles `data-doorbell-muted`, a playing reply
+  toggles `data-doorbell-playing`, `?talk=0` sets `data-doorbell-talk="off"`,
+  a denied mic sets `data-doorbell-mic="denied"`.
+- **No inline style survives at all**, verified by inspection.
 - `server2.py` warns on a non-https allowlist entry.
 
 ## Open items
 
 - The kitchen tablet's actual origin, and whether it is https (blocks nothing
-  here; determines whether the embed works at all).
-- Dashboard to confirm the DOM contract list, per its offer to review it as a
-  list rather than discover gaps mid-build.
+  here; determines whether the embed works at all). **Cheap test needing no
+  tooling:** the dashboard's Settings → Doorbell panel has a "Request Microphone
+  Access" button that reports granted/denied. `getUserMedia` does not exist on an
+  insecure origin, so if that has ever reported *granted* on the kitchen tablet
+  itself, the tablet is on a secure origin. If it has never worked there, the
+  embed has been broken since before this change was contemplated.
+- Dashboard's font assets: stable paths under `frontend/public/fonts/` and a CORS
+  layer on its backend. It will signal when both are live; nothing on either side
+  should assume the other shipped first.
