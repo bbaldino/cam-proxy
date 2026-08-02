@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Doorbell Theming Harness</title>
+  <style>
+    body { font: 14px sans-serif; margin: 0; display: flex; height: 100vh; }
+    #panel { width: 280px; padding: 16px; background: #222; color: #eee; overflow-y: auto; }
+    #panel button { display: block; width: 100%; margin-bottom: 8px; padding: 8px; cursor: pointer; }
+    #frame-wrap { flex: 1; background: #111; display: flex; align-items: center; justify-content: center; }
+    iframe { width: 100%; height: 100%; border: none; }
+    #frame-wrap.scrim { background: rgba(0,0,0,0.9); padding: 40px; }
+    #frame-wrap.scrim iframe { border-radius: 16px; overflow: hidden; max-width: 900px; height: 75vh; }
+    #status { font: 12px monospace; white-space: pre-wrap; margin-top: 12px; color: #9f9; }
+  </style>
+</head>
+<body>
+  <div id="panel">
+    <h3>Theming harness</h3>
+    <button data-payload="vars">1. Colours only (dark)</button>
+    <button data-payload="paper">2. Colours only (warm paper)</button>
+    <button data-payload="layout">3. Layout: sidebar to bottom</button>
+    <button data-payload="split">4. Layout: replies left, controls right</button>
+    <button data-payload="font">5. Fonts (generic families)</button>
+    <button data-payload="clear">6. Clear override</button>
+    <button id="scrim">Toggle black scrim / ring-modal framing</button>
+    <div id="status">waiting for doorbell:ready...</div>
+  </div>
+  <div id="frame-wrap">
+    <iframe id="frame" src="/webrtc-doorbell.html" allow="autoplay; camera; microphone"></iframe>
+  </div>
+<script>
+const frame = document.getElementById('frame');
+const status = document.getElementById('status');
+
+const PAYLOADS = {
+  vars: `:root{--doorbell-bg:#1a1e2a;--doorbell-surface:#232838;--doorbell-text:#e6e8ef;
+    --doorbell-text-muted:#98a0b3;--doorbell-accent:#5b8def;--doorbell-accent-text:#fff;
+    --doorbell-danger:#e05252;--doorbell-success:#3ecf8e;--doorbell-border:rgba(255,255,255,0.12)}`,
+  paper: `:root{--doorbell-bg:#f6f1e7;--doorbell-surface:#ece5d8;--doorbell-text:#191512;
+    --doorbell-text-muted:#6b6259;--doorbell-accent:#b43a1a;--doorbell-accent-text:#f6f1e7;
+    --doorbell-danger:#b43a1a;--doorbell-success:#3f5d44;--doorbell-border:#cec9c1}`,
+  layout: `[data-doorbell="layout"]{flex-direction:column}
+    [data-doorbell="sidebar"]{width:100%;height:auto;flex-direction:row;justify-content:space-between;align-items:center}
+    [data-doorbell="replies"]{flex-direction:row;flex-wrap:wrap}
+    [data-doorbell="stage"]{height:auto;flex:1;min-height:0}`,
+  split: `[data-doorbell="sidebar"]{width:320px}
+    [data-doorbell="replies"]{display:grid;grid-template-columns:1fr 1fr}
+    [data-doorbell="controls"]{flex-direction:column}`,
+  font: `:root{--doorbell-font-body:Georgia,serif;--doorbell-font-display:"Courier New",monospace;
+    --doorbell-font-mono:"Courier New",monospace}`,
+  clear: ``,
+};
+
+function send(css) {
+  frame.contentWindow.postMessage({ type: 'doorbell:style', css }, '*');
+}
+
+document.querySelectorAll('#panel button[data-payload]').forEach(btn => {
+  btn.addEventListener('click', () => send(PAYLOADS[btn.dataset.payload]));
+});
+
+document.getElementById('scrim').addEventListener('click', () => {
+  document.getElementById('frame-wrap').classList.toggle('scrim');
+});
+
+window.addEventListener('message', (ev) => {
+  const msg = ev.data;
+  if (!msg || typeof msg !== 'object') return;
+  if (msg.type === 'doorbell:ready') {
+    status.textContent = `doorbell:ready (contract ${msg.contract})\norigin: ${ev.origin}`;
+  } else if (msg.type === 'doorbell:video-playing') {
+    status.textContent += '\ndoorbell:video-playing';
+  }
+});
+</script>
+</body>
+</html>

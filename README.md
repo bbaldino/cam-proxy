@@ -47,6 +47,7 @@ A proxy server for IP cameras with two-way audio, designed to work alongside [go
 | `RTSP_PROXY_PORT` | `8554` | RTSP proxy listen port (go2rtc connects here) |
 | `AUDIO_DIR` | `/app/audio` | Directory for chime and message audio files |
 | `CORS_ORIGINS` | (empty) | Comma-separated allowed CORS origins |
+| `DOORBELL_THEME_ORIGINS` | `https://dashboard.baldino.me` | Comma-separated allowlist of parent origins allowed to theme the doorbell page via `postMessage` (see [`docs/theming.md`](docs/theming.md)). Entries must be `https://` or `http://localhost` — a parent frame on any other origin cannot host WebRTC in the doorbell iframe at all. |
 
 ### Docker
 
@@ -104,6 +105,11 @@ Chime and message audio files are stored in the `AUDIO_DIR` volume:
 | `go2rtc` | `/api/go2rtc` | go2rtc API base path (proxied) |
 | `talk` | `1` | Set to `0` to hide the talk button (e.g. for Chromecast displays without mic access) |
 | `debug` | `0` | Set to `1` for always-on debug overlay with connection timing and media stats |
+
+The page is themeable by its embedder: an allowlisted parent frame can recolour, refont, and
+reposition it live over `postMessage`, with no reload required. See
+[`docs/theming.md`](docs/theming.md) for the full contract, and `test-embed.html` in this repo for
+a working reference parent.
 
 ## Home Assistant Integration
 
