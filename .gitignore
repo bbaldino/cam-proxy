@@ -1,2 +1,4 @@
 audio/
 *.pem
+.claude/
+.superpowers/
