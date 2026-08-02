@@ -109,7 +109,10 @@ Chime and message audio files are stored in the `AUDIO_DIR` volume:
 The page is themeable by its embedder: an allowlisted parent frame can recolour, refont, and
 reposition it live over `postMessage`, with no reload required. See
 [`docs/theming.md`](docs/theming.md) for the full contract, and `test-embed.html` in this repo for
-a working reference parent.
+a working reference parent. `test-embed.html` is a development tool (it is not shipped in the
+Docker image) served from the same origin as the doorbell page — add that origin to
+`DOORBELL_THEME_ORIGINS` for its buttons to do anything, otherwise every payload it sends is
+correctly rejected by the allowlist and it looks broken.
 
 ## Home Assistant Integration
 

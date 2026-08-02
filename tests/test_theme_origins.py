@@ -49,6 +49,24 @@ def test_rejects_malformed_or_unsafe_entries(raw):
     assert parse_theme_origins(raw) == []
 
 
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # Browsers always report event.origin lowercase.
+        ("https://Dashboard.Baldino.me", "https://dashboard.baldino.me"),
+        # Browsers omit default ports from an origin.
+        ("https://dashboard.baldino.me:443", "https://dashboard.baldino.me"),
+        # Both normalisations apply together, and the local-host check
+        # downstream (is_secure_origin) depends on the host being lowercase.
+        ("http://LOCALHOST:5173", "http://localhost:5173"),
+        # A non-default port must be preserved, not stripped.
+        ("https://example.com:8443", "https://example.com:8443"),
+    ],
+)
+def test_normalizes_case_and_default_port(raw, expected):
+    assert parse_theme_origins(raw) == [expected]
+
+
 def test_keeps_valid_entries_alongside_rejected_ones():
     raw = "https://good.example.com,not-a-url,https://also-good.example.com:8443"
     assert parse_theme_origins(raw) == [

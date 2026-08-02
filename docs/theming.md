@@ -7,6 +7,13 @@ contract for anyone building a parent page against it. `test-embed.html` in
 this repo is a working reference parent — copy the handshake from it directly
 rather than re-deriving it from this document.
 
+`test-embed.html` is a development tool, not a production surface: it is not
+shipped in the container image, and it is served from the same origin as the
+doorbell page itself. To see its buttons do anything, add that serving origin
+(e.g. `http://localhost:8899`) to `DOORBELL_THEME_ORIGINS` — otherwise every
+payload it sends is correctly rejected by the allowlist, and the harness
+looks broken when it is actually working as designed.
+
 ## Protocol
 
 Page → parent:
@@ -24,9 +31,33 @@ Parent → page, any number of times:
 
 The page injects `css` verbatim into a single `<style id="doorbell-override">`
 appended last in `<head>`, replacing its previous contents on every message.
-Because the override sheet is last in document order and every base rule is a
-single class/attribute selector, the injected sheet wins ties without needing
-`!important` or a specificity fight.
+Because the override sheet is last in document order, it wins ties against
+any base rule of equal specificity — but not every base rule sits at the same
+specificity.
+
+Every base rule that sets a **resting** appearance is a single
+class/attribute selector — specificity `(0,1,0)` — so the injected sheet,
+sitting at the same specificity, always wins there without needing
+`!important` or a specificity fight. Six base rules that set a **state**
+appearance are two-attribute compounds — `(0,2,0)` — and these outrank a bare
+`(0,1,0)` override *while that state is active*:
+
+- `[data-doorbell="debug"][data-visible]`
+- `[data-doorbell="reply"][data-doorbell-playing]`
+- `[data-doorbell="talk"][data-doorbell-talking]`
+- `[data-doorbell="talk"][data-doorbell-mic="denied"]`
+- `[data-doorbell-talk="off"] [data-doorbell="talk"]`
+- the two `[data-doorbell-reply-count="0"]` rules (hiding the heading and the
+  replies container)
+
+These compounds are deliberate — each is commented in the base sheet
+explaining why — not oversights to be fixed. The reliable way to restyle one
+of these states is either to override the CSS variable it reads (e.g.
+`--doorbell-success`, which both the "reply playing" and "talking" colours
+come from), or to write a selector of the same two-attribute specificity
+yourself, e.g. `[data-doorbell="talk"][data-doorbell-talking]{background:blue}`.
+A plain `[data-doorbell="talk"]{background:blue}` override will apply at rest
+but silently lose to the base rule the moment that state becomes active.
 
 ### `doorbell:ready` fires on every load — theme on every one, not just the first
 
@@ -41,6 +72,14 @@ first.** A parent that themes only once will come back unthemed after any
 reload (e.g. a dashboard that mounts a fresh iframe on every doorbell ring),
 and nothing will report the failure — the page simply renders with defaults
 again, silently.
+
+There is also a startup race to guard against: if a parent attaches its
+`message` listener after the iframe's script has already run, it can miss
+`doorbell:ready` entirely — the message fires once, synchronously in page
+script, and is not replayed for a listener that shows up late. As a
+belt-and-braces measure, parents should also send their CSS on the iframe
+element's own `load` event, in addition to responding to `doorbell:ready`,
+so a themed reload doesn't depend on listener attach order.
 
 ### Contract versioning
 
@@ -72,14 +111,12 @@ button cannot work, regardless of theming. The server warns at startup for
 any configured origin that fails this check. This isn't a theming-specific
 policy; it's a precondition for the page working at all when framed.
 
-### Operator note: origins are matched by exact string
+### Operator note: origins are normalised for you
 
-Nothing lowercases configured origins. If `DOORBELL_THEME_ORIGINS` contains
-`https://Dashboard.baldino.me` (mixed case), it passes the allowlist's format
-validation and gets injected into the page as-is — but browsers always report
-`event.origin` in lowercase, so it will never match, and every
-`doorbell:style` message will be silently rejected. Configure origins in
-**lowercase, with no trailing slash**.
+`DOORBELL_THEME_ORIGINS` entries are lowercased and have a default port
+(`:443` for `https`, `:80` for `http`) stripped before matching, so configure
+origins however is convenient — mixed case and an explicit default port both
+still match at runtime.
 
 ### Operator note: two different warnings mean two different problems
 
@@ -95,8 +132,9 @@ validation and gets injected into the page as-is — but browsers always report
   logged per rejected message, when the allowlist is non-empty but does not
   contain the sender's actual origin. If you see this, the injection route is
   working; the configured origin string doesn't match the parent's real
-  origin (check for the case-sensitivity issue above, a stray port, or `http`
-  vs `https`).
+  origin (case and a default port are normalised automatically — see above —
+  so look instead for a scheme mismatch (`http` vs `https`) or a non-default
+  port that doesn't match the parent's actual origin).
 
 The first is "theming does nothing, and never will until configuration is
 fixed"; the second is "theming does nothing for this specific parent."
@@ -128,6 +166,12 @@ wrapper elements on the path between any two hooks:
     │       └── [talk]
     └── [debug-toggle]      the "i" button
 ```
+
+`[overlay]`, `[overlay-inner]`, `[spinner]`, and `[overlay-text]` exist only
+until the first frame plays: 300ms after the page reaches `data-doorbell-state="live"`,
+the script calls `overlay.remove()` and the whole subtree is removed from the
+DOM, not just hidden. Styling these four for a state that occurs later (e.g.
+a mid-stream `error`) has no effect, because by then the element is gone.
 
 Each name above is the value of a `data-doorbell` attribute, e.g.
 `[data-doorbell="stage"]` selects the video wrapper. `replies` and `controls`
@@ -167,9 +211,12 @@ variables.
 **Fonts are variables, not inheritance.** Setting `font-family` on the root
 and relying on cascade is fragile — any descendant rule that happens to set
 `font-family` silently wins over inheritance, invisibly to the embedder. The
-base sheet sets `font-family` in exactly three places (root, headings, the
-mono/stats overlay), matching the three variables above; no other rule in the
-base sheet sets `font-family`.
+base sheet sets `font-family` in exactly four places: root, headings, the
+mono/stats overlay, and the debug-toggle button (the "i" in the corner). The
+first three match the three variables above; the toggle is a `<button>`, and
+form controls do not inherit `font-family` from an ancestor, so it needs its
+own declaration — it reuses `--doorbell-font-mono` rather than introducing a
+fourth variable. No other rule in the base sheet sets `font-family`.
 
 Font *files* still come from the embedder via `@font-face` in the same CSS
 payload. Note: injected CSS referencing `http://` subresources (including
@@ -226,9 +273,13 @@ Four rules are easy to violate by accident. All four are load-bearing.
    `data-doorbell-reply-count` (mirrored onto both `[replies]` and root) is
    there so you can vary layout *by* count, without ever hard-coding one.
 
-4. **`data-doorbell-reply-count="0"` hides the heading by a rule that
-   outranks a plain override.** The base sheet hides the "Quick Replies"
-   heading and the replies container when the count is zero, via:
+4. **State rules outrank a plain override while that state is active.** As
+   covered under *Protocol* above, six base rules that express a state are
+   two-attribute compounds, which are more specific than a bare one-attribute
+   override — this is a class of gotcha, not a single one. The
+   reply-count-zero case is the worked example: the base sheet hides the
+   "Quick Replies" heading and the replies container when the count is zero,
+   via:
 
    ```css
    [data-doorbell-reply-count="0"] [data-doorbell="replies-heading"],
@@ -244,6 +295,12 @@ Four rules are easy to violate by accident. All four are load-bearing.
    need the heading to behave differently at zero replies than this default
    (hidden), you must write your own `[data-doorbell-reply-count="0"]`-scoped
    rule; a plain override of `replies-heading` will not reach that case.
+
+   The same shape applies to the other five state rules: a plain override
+   changes the resting look but is silently beaten the instant the state rule
+   applies. Match the compound's specificity, or restyle via the CSS variable
+   the state rule reads, rather than assuming a bare override reaches every
+   state.
 
 ## What's out of scope here
 

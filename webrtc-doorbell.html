@@ -56,8 +56,8 @@
     [data-doorbell="debug-toggle"] {
       position: absolute; bottom: 6px; right: 6px; width: 28px; height: 28px;
       background: rgba(0, 0, 0, 0.15); border: none; border-radius: 6px;
-      color: rgba(0, 0, 0, 0.4); font-size: 13px; cursor: pointer;
-      z-index: 20; line-height: 28px; text-align: center;
+      color: rgba(0, 0, 0, 0.4); font-family: var(--doorbell-font-mono); font-size: 13px;
+      cursor: pointer; z-index: 20; line-height: 28px; text-align: center;
     }
     [data-doorbell="debug-toggle"]:hover {
       background: rgba(0, 0, 0, 0.3); color: var(--doorbell-text);
@@ -71,7 +71,7 @@
 
     [data-doorbell="replies-heading"] {
       color: var(--doorbell-text); font-family: var(--doorbell-font-display);
-      font-size: 13px; margin: 0; text-align: center;
+      font-size: 13px; font-weight: 400; margin: 0; text-align: center;
     }
 
     [data-doorbell="replies"] { display: flex; flex-direction: column; gap: 10px; }
@@ -173,6 +173,10 @@ const setState = (s) => root.setAttribute('data-doorbell-state', s);
 // <style> appended last in <head>, so it wins ties by document order. With no
 // messages received the page keeps its defaults, which is the Chromecast path.
 const THEME_CONTRACT = 1;
+// Single source of truth: the markup's data-doorbell-contract="1" is only the
+// initial value, kept in the HTML so it's visible without running JS. This
+// overwrite ensures a future contract bump can't update one and miss the other.
+root.setAttribute('data-doorbell-contract', THEME_CONTRACT);
 const THEME_ORIGINS = (
   document.querySelector('meta[name="doorbell-theme-origins"]')?.content || ''
 ).split(',').map(s => s.trim()).filter(Boolean);
@@ -348,7 +352,7 @@ async function connect() {
     const count = String(msgs.length);
     document.getElementById('messages').setAttribute('data-doorbell-reply-count', count);
     root.setAttribute('data-doorbell-reply-count', count);
-  });
+  }).catch(e => console.warn('[doorbell] failed to load quick replies:', e));
 
   let firstFrameLogged = false;
   video.addEventListener('playing', () => {

@@ -19,10 +19,21 @@ _LOCAL_HOSTS = ("localhost", "127.0.0.1")
 
 
 def parse_theme_origins(raw):
-    """Parse a comma-separated allowlist, dropping anything malformed."""
+    """Parse a comma-separated allowlist, dropping anything malformed.
+
+    Candidates are lowercased and stripped of a default port (`:443` for
+    https, `:80` for http) before validation. Browsers always report
+    `event.origin` lowercase and without a default port, so an operator's
+    mixed-case entry or explicit `:443`/`:80` would otherwise pass validation
+    and then silently never match.
+    """
     origins = []
     for entry in raw.split(","):
-        candidate = entry.strip().rstrip("/")
+        candidate = entry.strip().rstrip("/").lower()
+        if candidate.startswith("https://") and candidate.endswith(":443"):
+            candidate = candidate[: -len(":443")]
+        elif candidate.startswith("http://") and candidate.endswith(":80"):
+            candidate = candidate[: -len(":80")]
         if candidate and _ORIGIN_RE.match(candidate):
             origins.append(candidate)
     return origins

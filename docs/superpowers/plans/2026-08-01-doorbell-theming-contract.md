@@ -12,12 +12,12 @@
 
 ## Global Constraints
 
-- **No change to any always-visible resting colour.** Every current colour becomes a variable *default*, and the Chromecast/DashCast path receives no messages, so the defaults are what it actually renders. Deliberate consolidation of near-duplicate hover and transient shades into one variable IS accepted — spinner `#3b82f6`→`--doorbell-accent`, reply hover `#4a8be5`→`color-mix`, reply-playing `#2e8b57`→`--doorbell-success`, debug-toggle hover `#333`→`--doorbell-text`, and the debug-toggle glyph inheriting the body face (it cannot take `font-family` without breaking the three-rule limit below). A resting colour changing is a defect; a merged hover shade is not.
+- **No change to any always-visible resting colour or font.** Every current colour becomes a variable *default*, and the Chromecast/DashCast path receives no messages, so the defaults are what it actually renders. Deliberate consolidation of near-duplicate hover and transient shades into one variable IS accepted — spinner `#3b82f6`→`--doorbell-accent`, reply hover `#4a8be5`→`color-mix`, reply-playing `#2e8b57`→`--doorbell-success`, debug-toggle hover `#333`→`--doorbell-text`. The debug-toggle glyph must render in `--doorbell-font-mono`, matching its pre-branch appearance — a `<button>` does not inherit `font-family` from an ancestor, so this requires its own declaration (see the four-rule count below, not three). A resting colour or font changing is a defect; a merged hover shade is not.
 - **The base sheet must not invent state styling nobody asked for.** State hooks are published for embedders to target; they do not come with built-in appearance changes. The page's own look is the cast display's and the HA card's look, and neither of those asked for it.
 - **No `!important` anywhere in the base stylesheet.** The override sheet wins by document order, not specificity.
 - **No id selectors for anything themeable.** `#sidebar` is (1,0,0) and would beat an embedder's `[data-doorbell="sidebar"]` at (0,1,0). Ids stay in the markup for `getElementById` only. Base rules select on `data-doorbell` attributes so both sheets sit at (0,1,0).
 - **No inline styles.** No `style="..."` attributes in markup and no `element.style.x =` in JS. Both silently beat any stylesheet. Use attribute toggles.
-- **`font-family` is set in exactly three rules** — root, headings, stats overlay — and nowhere else.
+- **`font-family` is set in exactly four rules** — root, headings, stats overlay, and the debug-toggle button (a `<button>` doesn't inherit `font-family`, so it needs its own declaration) — and nowhere else.
 - **No `:has()`.** Older Chromecast browsers may not support it; `data-doorbell-reply-count` is mirrored onto root so descendant selectors suffice.
 - **Every element with a labelled descendant is itself labelled.** An unlabelled wrapper is a dead spot an embedder cannot reach around.
 - **Allowlisted origins must be https** (or `http://localhost` / `http://127.0.0.1`). An https iframe inside an http parent is not a secure context, so WebRTC and `getUserMedia` are unavailable entirely.
@@ -345,8 +345,8 @@ Replace `webrtc-doorbell.html` lines 1–68 with:
     [data-doorbell="debug-toggle"] {
       position: absolute; bottom: 6px; right: 6px; width: 28px; height: 28px;
       background: rgba(0, 0, 0, 0.15); border: none; border-radius: 6px;
-      color: rgba(0, 0, 0, 0.4); font-size: 13px; cursor: pointer;
-      z-index: 20; line-height: 28px; text-align: center;
+      color: rgba(0, 0, 0, 0.4); font-family: var(--doorbell-font-mono); font-size: 13px;
+      cursor: pointer; z-index: 20; line-height: 28px; text-align: center;
     }
     [data-doorbell="debug-toggle"]:hover {
       background: rgba(0, 0, 0, 0.3); color: var(--doorbell-text);
@@ -360,7 +360,7 @@ Replace `webrtc-doorbell.html` lines 1–68 with:
 
     [data-doorbell="replies-heading"] {
       color: var(--doorbell-text); font-family: var(--doorbell-font-display);
-      font-size: 13px; margin: 0; text-align: center;
+      font-size: 13px; font-weight: 400; margin: 0; text-align: center;
     }
 
     [data-doorbell="replies"] { display: flex; flex-direction: column; gap: 10px; }
@@ -464,7 +464,7 @@ grep -nE '^\s*#[a-z-]+ *[,{]' webrtc-doorbell.html
 grep -c 'font-family' webrtc-doorbell.html
 ```
 
-Expected: the first three produce **no output**; `font-family` count is exactly **3** — root, `replies-heading`, and `debug`. (The `--doorbell-font-*` declarations do not contain the string.) A fourth match means a stray rule that would silently beat an embedder's font override.
+Expected: the first three produce **no output**; `font-family` count is exactly **4** — root, `replies-heading`, `debug`, and `debug-toggle` (a `<button>` doesn't inherit `font-family`, so it needs its own declaration). (The `--doorbell-font-*` declarations do not contain the string.) A fifth match means a stray rule that would silently beat an embedder's font override.
 
 - [ ] **Step 3: Verify visual parity**
 
