@@ -110,10 +110,12 @@
     [data-doorbell="talk"][data-doorbell-mic="denied"] {
       background: color-mix(in srgb, var(--doorbell-danger) 50%, var(--doorbell-surface));
     }
+    /* No [data-doorbell-muted] rule by design. The video starts muted so the
+       attribute is present from first paint; styling it would darken the button
+       on every load of the cast display, which today shows a flat #555 and
+       distinguishes state by the label alone. The attribute is published for
+       embedders to style; the base sheet does not use it. */
     [data-doorbell="mute"] { background: var(--doorbell-text-muted); }
-    [data-doorbell="mute"][data-doorbell-muted] {
-      background: color-mix(in srgb, var(--doorbell-text-muted) 70%, black);
-    }
     [data-doorbell-talk="off"] [data-doorbell="talk"] { display: none; }
 
     [data-doorbell="overlay"] {
