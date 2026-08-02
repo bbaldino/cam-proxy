@@ -1005,7 +1005,7 @@ Open `http://localhost:8899/test-embed.html` and walk the checklist:
 
 Run: `python server2.py` (no `DOORBELL_THEME_ORIGINS`), open `http://localhost:8899/webrtc-doorbell.html` directly.
 
-Expected: pixel-identical to the pre-refactor page. To compare directly, extract the original to a scratch file and open it side by side — `0d7f697` is the last commit before implementation began:
+Expected: every always-visible resting colour matches the pre-refactor page. Two deliberate consolidations are expected to differ and are NOT defects — the spinner accent (`#3b82f6`→`--doorbell-accent` `#3a7bd5`) and reply-playing (`#2e8b57`→`--doorbell-success` `#27ae60`), both ruled on by the plan owner and recorded in Global Constraints. To compare directly, extract the original to a scratch file and open it side by side — `0d7f697` is the last commit before implementation began:
 
 ```bash
 git show 0d7f697:webrtc-doorbell.html > /tmp/doorbell-before.html
