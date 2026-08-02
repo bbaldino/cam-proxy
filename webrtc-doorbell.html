@@ -165,12 +165,14 @@ const params = new URLSearchParams(location.search);
 const stream = params.get('stream') || 'doorbell_sub';
 const go2rtc = params.get('go2rtc') || '/api/go2rtc';
 const showTalk = params.get('talk') !== '0';
+const root = document.body;
+const setState = (s) => root.setAttribute('data-doorbell-state', s);
 
-if (!showTalk) document.getElementById('talk').style.display = 'none';
+root.setAttribute('data-doorbell-talk', showTalk ? 'on' : 'off');
 
 const dbg = document.getElementById('dbg');
 const debugAlways = params.get('debug') === '1';
-if (debugAlways) dbg.classList.add('always');
+if (debugAlways) dbg.setAttribute('data-visible', '');
 let setupLines = [];
 let statsText = '';
 function log(msg) { setupLines.push(msg); renderDbg(); }
@@ -181,7 +183,7 @@ function renderDbg() {
 }
 
 document.getElementById('dbg-toggle').addEventListener('click', () => {
-  dbg.classList.toggle('visible');
+  dbg.toggleAttribute('data-visible');
 });
 
 const muteBtn = document.getElementById('mute');
@@ -193,6 +195,7 @@ muteBtn.addEventListener('click', () => {
 
 video.addEventListener('volumechange', () => {
   muteBtn.textContent = video.muted ? 'UNMUTE' : 'MUTE';
+  muteBtn.toggleAttribute('data-doorbell-muted', video.muted);
 });
 
 const t0 = performance.now();
@@ -203,6 +206,7 @@ const elapsed = () => ((performance.now() - t0) / 1000).toFixed(2);
 
 async function connect() {
   log(`[${elapsed()}s] Connecting...`);
+  setState('connecting');
 
   const pc = new RTCPeerConnection({ iceServers: [] });
 
@@ -240,20 +244,20 @@ async function connect() {
       } catch (e) {
         console.warn('No mic access:', e);
         talkBtn.textContent = e.message || e.name;
-        talkBtn.style.background = 'rgba(200,200,0,0.7)';
+        talkBtn.setAttribute('data-doorbell-mic', 'denied');
         return;
       }
     }
     if (micTrack) {
       micTrack.enabled = true;
-      talkBtn.classList.add('active');
+      talkBtn.toggleAttribute('data-doorbell-talking', true);
       talkBtn.textContent = 'TALKING';
     }
   }
 
   function stopTalking() {
     if (micTrack) micTrack.enabled = false;
-    talkBtn.classList.remove('active');
+    talkBtn.toggleAttribute('data-doorbell-talking', false);
     talkBtn.textContent = 'TALK';
   }
 
@@ -270,16 +274,16 @@ async function connect() {
   function playMessage(btn) {
     if (playingMessage) return;
     playingMessage = true;
-    btn.classList.add('playing');
+    btn.toggleAttribute('data-doorbell-playing', true);
     fetch(`${baseUrl}/api/chime?file=${btn.dataset.msgId}`, { method: 'POST' })
       .then(r => r.json())
       .then(() => {
-        btn.classList.remove('playing');
+        btn.toggleAttribute('data-doorbell-playing', false);
         playingMessage = false;
       })
       .catch(e => {
         console.error('Message playback failed:', e);
-        btn.classList.remove('playing');
+        btn.toggleAttribute('data-doorbell-playing', false);
         playingMessage = false;
       });
   }
@@ -287,8 +291,14 @@ async function connect() {
   function addMessageBtn(msg) {
     const container = document.getElementById('messages');
     const div = document.createElement('div');
-    div.className = 'msg-btn';
+    div.dataset.doorbell = 'reply';
+    // Internal lookup key, read by playMessage to build /api/chime?file=...
+    // Kept separate from the published hook below: that one is documented to
+    // embedders as free to change, and playback must not depend on it.
     div.dataset.msgId = msg.id;
+    // Cosmetic hook only: slugs are user-editable and a reply can be deleted
+    // at any time, so layout must never depend on a specific one.
+    div.dataset.doorbellReply = msg.id;
     div.textContent = msg.text;
     div.addEventListener('click', () => playMessage(div));
     container.appendChild(div);
@@ -296,6 +306,11 @@ async function connect() {
 
   fetch(`${baseUrl}/api/slots`).then(r => r.json()).then(msgs => {
     msgs.forEach(addMessageBtn);
+    // Mirrored onto root so descendant selectors work without :has(),
+    // which older Chromecast browsers may not support.
+    const count = String(msgs.length);
+    document.getElementById('messages').setAttribute('data-doorbell-reply-count', count);
+    root.setAttribute('data-doorbell-reply-count', count);
   });
 
   let firstFrameLogged = false;
@@ -303,11 +318,9 @@ async function connect() {
     if (!firstFrameLogged) {
       firstFrameLogged = true;
       log(`[${elapsed()}s] First frame playing!`);
+      setState('live');
       const overlay = document.getElementById('loading-overlay');
-      if (overlay) {
-        overlay.style.opacity = '0';
-        setTimeout(() => overlay.remove(), 300);
-      }
+      if (overlay) setTimeout(() => overlay.remove(), 300);
       window.parent.postMessage('doorbell-video-playing', '*');
     }
   });
@@ -323,7 +336,7 @@ async function connect() {
   pc.oniceconnectionstatechange = () => {
     console.log(`ICE state: ${pc.iceConnectionState}`);
     if (pc.iceConnectionState === 'connected') log(`[${elapsed()}s] ICE connected`);
-    if (pc.iceConnectionState === 'failed') log(`[${elapsed()}s] ICE FAILED`);
+    if (pc.iceConnectionState === 'failed') { log(`[${elapsed()}s] ICE FAILED`); setState('error'); }
   };
 
   log(`[${elapsed()}s] Creating offer...`);
@@ -342,6 +355,7 @@ async function connect() {
 
   if (!resp.ok) {
     log(`[${elapsed()}s] go2rtc error: ${resp.status} ${await resp.text()}`);
+    setState('error');
     return;
   }
 
@@ -405,7 +419,7 @@ async function connect() {
   }, 1000);
 }
 
-connect().catch(e => log(`Error: ${e.message}`));
+connect().catch(e => { setState('error'); log(`Error: ${e.message}`); });
 </script>
 </body>
 </html>
