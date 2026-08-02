@@ -514,6 +514,7 @@ app.router.add_post("/api/chime", play_chime)
 app.router.add_get("/api/go2rtc/api/ws", ws_proxy)
 app.router.add_route("*", "/api/go2rtc/{path:.*}", http_proxy)
 app.router.add_get("/webrtc-doorbell.html", serve_doorbell)
+app.router.add_get("/webrtc-doorbell.html/", serve_doorbell)
 app.router.add_static("/", SERVE_DIR, show_index=True)
 
 if __name__ == "__main__":

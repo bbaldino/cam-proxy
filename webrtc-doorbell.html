@@ -194,6 +194,15 @@ window.addEventListener('message', (ev) => {
   overrideStyle.textContent = msg.css;
 });
 
+if (THEME_ORIGINS.length === 0) {
+  console.warn(
+    '[doorbell] no theming origins configured — every doorbell:style message ' +
+    'will be ignored. Either DOORBELL_THEME_ORIGINS is empty, or this page was ' +
+    'served without allowlist injection (check the URL reached /webrtc-doorbell.html ' +
+    'exactly, not a variant that fell through to the static handler).'
+  );
+}
+
 window.parent.postMessage({ type: 'doorbell:ready', contract: THEME_CONTRACT }, '*');
 
 root.setAttribute('data-doorbell-talk', showTalk ? 'on' : 'off');
