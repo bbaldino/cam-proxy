@@ -12,7 +12,8 @@
 
 ## Global Constraints
 
-- **Zero visual change with no messages received.** Every current colour becomes a variable *default*. The Chromecast/DashCast path receives nothing and must look identical after this change.
+- **No change to any always-visible resting colour.** Every current colour becomes a variable *default*, and the Chromecast/DashCast path receives no messages, so the defaults are what it actually renders. Deliberate consolidation of near-duplicate hover and transient shades into one variable IS accepted — spinner `#3b82f6`→`--doorbell-accent`, reply hover `#4a8be5`→`color-mix`, reply-playing `#2e8b57`→`--doorbell-success`, debug-toggle hover `#333`→`--doorbell-text`, and the debug-toggle glyph inheriting the body face (it cannot take `font-family` without breaking the three-rule limit below). A resting colour changing is a defect; a merged hover shade is not.
+- **The base sheet must not invent state styling nobody asked for.** State hooks are published for embedders to target; they do not come with built-in appearance changes. The page's own look is the cast display's and the HA card's look, and neither of those asked for it.
 - **No `!important` anywhere in the base stylesheet.** The override sheet wins by document order, not specificity.
 - **No id selectors for anything themeable.** `#sidebar` is (1,0,0) and would beat an embedder's `[data-doorbell="sidebar"]` at (0,1,0). Ids stay in the markup for `getElementById` only. Base rules select on `data-doorbell` attributes so both sheets sit at (0,1,0).
 - **No inline styles.** No `style="..."` attributes in markup and no `element.style.x =` in JS. Both silently beat any stylesheet. Use attribute toggles.
@@ -398,10 +399,12 @@ Replace `webrtc-doorbell.html` lines 1–68 with:
     [data-doorbell="talk"][data-doorbell-mic="denied"] {
       background: color-mix(in srgb, var(--doorbell-danger) 50%, var(--doorbell-surface));
     }
+    /* No [data-doorbell-muted] rule by design. The video starts muted so the
+       attribute is present from first paint; styling it would darken the button
+       on every load of the cast display, which today shows a flat #555 and
+       distinguishes state by the label alone. The attribute is published for
+       embedders to style; the base sheet does not use it. */
     [data-doorbell="mute"] { background: var(--doorbell-text-muted); }
-    [data-doorbell="mute"][data-doorbell-muted] {
-      background: color-mix(in srgb, var(--doorbell-text-muted) 70%, black);
-    }
     [data-doorbell-talk="off"] [data-doorbell="talk"] { display: none; }
 
     [data-doorbell="overlay"] {

@@ -236,7 +236,7 @@ through:
 | `data-doorbell-talk="on\|off"` | root | whether `?talk=0` hid the talk button |
 | `data-doorbell-reply-count="N"` | replies **and** root | number of replies loaded |
 | `data-doorbell-talking` | talk button | present while transmitting |
-| `data-doorbell-muted` | mute button | present while muted |
+| `data-doorbell-muted` | mute button | present while muted (see note) |
 | `data-doorbell-mic="denied"` | talk button | mic permission refused |
 | `data-doorbell-playing` | reply button | present while that reply plays |
 
@@ -245,6 +245,15 @@ holding one child versus two is a different layout, and the embedder must be abl
 to see which without inspecting DOM it cannot read. `data-doorbell-reply-count` is
 mirrored onto root so descendant selectors work without relying on `:has()`,
 which is not safely available on older Chromecast browsers.
+
+**State hooks are hooks, not styling.** The base sheet publishes every state
+attribute but styles almost none of them, because the defaults are what the
+Chromecast display and the HA card render and neither asked for a new look.
+`data-doorbell-muted` is the clearest case: the `<video>` starts muted so the
+attribute is present from first paint, and giving it a colour would darken the
+mute button on *every* load of a page that today shows a flat `#555` and
+distinguishes muted state by its label alone. Embedders style these attributes;
+the page does not.
 
 **There is no error-message element.** Mic-permission failures render as the talk
 button's own label (`webrtc-doorbell.html:148`), hooked by `data-doorbell-mic`.
