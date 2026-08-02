@@ -38,7 +38,7 @@ specificity.
 Every base rule that sets a **resting** appearance is a single
 class/attribute selector — specificity `(0,1,0)` — so the injected sheet,
 sitting at the same specificity, always wins there without needing
-`!important` or a specificity fight. Six base rules that set a **state**
+`!important` or a specificity fight. Seven base rules that set a **state**
 appearance are two-attribute compounds — `(0,2,0)` — and these outrank a bare
 `(0,1,0)` override *while that state is active*:
 
@@ -47,6 +47,8 @@ appearance are two-attribute compounds — `(0,2,0)` — and these outrank a bar
 - `[data-doorbell="talk"][data-doorbell-talking]`
 - `[data-doorbell="talk"][data-doorbell-mic="denied"]`
 - `[data-doorbell-talk="off"] [data-doorbell="talk"]`
+- `[data-doorbell-state="live"] [data-doorbell="overlay"]` (fading the loading
+  overlay out — see the containment tree for the removal that follows it)
 - the two `[data-doorbell-reply-count="0"]` rules (hiding the heading and the
   replies container)
 
@@ -296,11 +298,19 @@ Four rules are easy to violate by accident. All four are load-bearing.
    (hidden), you must write your own `[data-doorbell-reply-count="0"]`-scoped
    rule; a plain override of `replies-heading` will not reach that case.
 
-   The same shape applies to the other five state rules: a plain override
+   The same shape applies to the other six state rules: a plain override
    changes the resting look but is silently beaten the instant the state rule
    applies. Match the compound's specificity, or restyle via the CSS variable
    the state rule reads, rather than assuming a bare override reaches every
    state.
+
+   The loading overlay is the subtlest of them, because it has two ways to
+   defeat you rather than one: while the page is `live` the base rule holds it
+   at `opacity: 0` against a bare override, and 300ms later the element is
+   removed from the DOM entirely, at which point no selector of any specificity
+   reaches it. Style the overlay for `loading`, `connecting`, and `error`
+   states that occur *before* the first frame plays; anything you write for
+   after it has nothing to apply to.
 
 ## What's out of scope here
 
