@@ -701,6 +701,15 @@ window.addEventListener('message', (ev) => {
   overrideStyle.textContent = msg.css;
 });
 
+if (THEME_ORIGINS.length === 0) {
+  console.warn(
+    '[doorbell] no theming origins configured — every doorbell:style message ' +
+    'will be ignored. Either DOORBELL_THEME_ORIGINS is empty, or this page was ' +
+    'served without allowlist injection (check the URL reached /webrtc-doorbell.html ' +
+    'exactly, not a variant that fell through to the static handler).'
+  );
+}
+
 window.parent.postMessage({ type: 'doorbell:ready', contract: THEME_CONTRACT }, '*');
 ```
 
@@ -808,8 +817,21 @@ aiohttp resolves routes in registration order, so this must come *above* `add_st
 
 ```python
 app.router.add_get("/webrtc-doorbell.html", serve_doorbell)
+app.router.add_get("/webrtc-doorbell.html/", serve_doorbell)
 app.router.add_static("/", SERVE_DIR, show_index=True)
 ```
+
+The trailing-slash variant is registered because aiohttp's plain-path resource
+matches only the exact path, so `GET /webrtc-doorbell.html/` would otherwise fall
+through to the static handler and serve the raw template — un-injected, allowlist
+empty, theming silently dead. It fails closed rather than open, which makes it a
+diagnosis problem rather than a security one, and diagnosis is exactly what an
+embedder cannot do from outside an iframe.
+
+Registering one more exact path does not prove no other variant can reach the
+static handler, so the page also warns when the allowlist arrives empty (Task 4's
+channel code) — that turns *any* bypass, present or future, into a visible symptom
+instead of a silent one.
 
 - [ ] **Step 4: Ship the new module in the image**
 
