@@ -1,0 +1,38 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Serialize runs so a post-merge run cannot race the run that spawned it.
+# cancel-in-progress MUST be false — cancelling mid-release can interrupt
+# tag creation.
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          # NOT the default GITHUB_TOKEN: tags it creates do not trigger
+          # publish-image.yml, so the release would silently produce no image.
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Auto-merge the release PR
+        if: steps.release.outputs.prs_created == 'true'
+        env:
+          # Must be RELEASE_BOT_TOKEN. A merge performed with GITHUB_TOKEN does
+          # not trigger the follow-up run that cuts the tag — same silent
+          # failure as tagging with it.
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+        run: gh pr merge --squash --delete-branch "${{ fromJSON(steps.release.outputs.pr).number }}"
