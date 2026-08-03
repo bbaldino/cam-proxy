@@ -28,17 +28,35 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      # Deliberately UNGATED — there is no `if:` here, and adding one back is
+      # the bug this replaced. `prs_created` is true only when the PR is
+      # *created*, never when it is updated, so a single failed merge poisons
+      # the repo permanently: every later push updates the same PR, the step is
+      # skipped, and you get green runs, an open release PR, no tag, no image,
+      # and nothing reporting a fault. Querying for the PR instead makes this
+      # idempotent and self-healing — it recovers on the next push.
+      #
+      # The title match is a weaker contract than an output read, and that is
+      # accepted on purpose. Judge it by how it fails: if the match misses, the
+      # release PR stays open and visible and somebody notices. If a stricter
+      # gate misses, the run goes green and the release stops silently. This
+      # same document rejects title-matching for filtering release commits —
+      # same technique, opposite verdict, because there a miss fails invisibly.
+      #
+      # `--repo` is required: this job has no actions/checkout step (the action
+      # is pure API), so `gh` has no git repository to infer the target from and
+      # dies with "fatal: not a git repository".
+      #
+      # `// empty` on the jq matters: without it, no open PR yields the literal
+      # string `null`, which then gets passed to `gh pr merge` as a PR number.
       - name: Auto-merge the release PR
-        if: steps.release.outputs.prs_created == 'true'
         env:
           # Must be RELEASE_BOT_TOKEN. A merge performed with GITHUB_TOKEN does
           # not trigger the follow-up run that cuts the tag — same silent
           # failure as tagging with it.
           GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
-        # --repo is REQUIRED here. This job has no actions/checkout step (the
-        # release-please action works entirely through the API), so the runner
-        # has no git repository for `gh` to infer the target from, and the
-        # command dies with "fatal: not a git repository". The release-plz
-        # workflows in the standard do check out, which is why this never
-        # surfaced there.
-        run: gh pr merge --squash --delete-branch --repo "${{ github.repository }}" "${{ fromJSON(steps.release.outputs.pr).number }}"
+        run: |
+          pr=$(gh pr list --repo "${{ github.repository }}" --state open --json number,title \
+                --jq 'map(select(.title | test("^chore(\\(.+\\))?: release "))) | .[0].number // empty')
+          if [ -z "$pr" ]; then echo "no open release PR"; exit 0; fi
+          gh pr merge --squash --delete-branch --repo "${{ github.repository }}" "$pr"
