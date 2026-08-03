@@ -137,8 +137,11 @@
     @keyframes doorbell-spin { to { transform: rotate(360deg); } }
   </style>
 </head>
+<!-- data-doorbell-reply-count is deliberately absent until /api/slots resolves:
+     "zero" and "not looked yet" are different claims, and asserting zero early
+     would fire the empty-state rules on every load. -->
 <body data-doorbell="root" data-doorbell-contract="1" data-doorbell-state="loading"
-      data-doorbell-talk="on" data-doorbell-reply-count="0">
+      data-doorbell-talk="on">
   <div id="loading-overlay" data-doorbell="overlay">
     <div data-doorbell="overlay-inner">
       <div data-doorbell="spinner"></div>
@@ -152,7 +155,7 @@
     </div>
     <div id="sidebar" data-doorbell="sidebar">
       <h3 data-doorbell="replies-heading">Quick Replies</h3>
-      <div id="messages" data-doorbell="replies" data-doorbell-reply-count="0"></div>
+      <div id="messages" data-doorbell="replies"></div>
       <div id="controls" data-doorbell="controls">
         <div id="mute" data-doorbell="mute" data-doorbell-muted>UNMUTE</div>
         <div id="talk" data-doorbell="talk">TALK</div>
@@ -345,14 +348,24 @@ async function connect() {
     container.appendChild(div);
   }
 
-  fetch(`${baseUrl}/api/slots`).then(r => r.json()).then(msgs => {
-    msgs.forEach(addMessageBtn);
+  function setReplyCount(n) {
+    const count = String(n);
     // Mirrored onto root so descendant selectors work without :has(),
     // which older Chromecast browsers may not support.
-    const count = String(msgs.length);
     document.getElementById('messages').setAttribute('data-doorbell-reply-count', count);
     root.setAttribute('data-doorbell-reply-count', count);
-  }).catch(e => console.warn('[doorbell] failed to load quick replies:', e));
+  }
+
+  fetch(`${baseUrl}/api/slots`).then(r => r.json()).then(msgs => {
+    msgs.forEach(addMessageBtn);
+    setReplyCount(msgs.length);
+  }).catch(e => {
+    // Settle the count even on failure: "we looked and there is nothing to
+    // show" is a different claim from "we have not looked", and leaving it
+    // unset would hang the heading over an empty container indefinitely.
+    console.warn('[doorbell] failed to load quick replies:', e);
+    setReplyCount(0);
+  });
 
   let firstFrameLogged = false;
   video.addEventListener('playing', () => {

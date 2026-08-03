@@ -129,13 +129,21 @@ applying.
 ### Rule: origins must be https
 
 **Every allowlisted origin must be `https://`, or `http://localhost` /
-`http://127.0.0.1`.** WebRTC and `getUserMedia` require a secure context, and
+`http://127.0.0.1`.** `getUserMedia` requires a secure context, and
 a document is only a secure context if its own origin is trustworthy *and*
 every ancestor is. An https doorbell page inside a plain-http parent is
-therefore not a secure context at all — video will not connect and the talk
-button cannot work, regardless of theming. The server warns at startup for
-any configured origin that fails this check. This isn't a theming-specific
-policy; it's a precondition for the page working at all when framed.
+therefore not a secure context, and the talk button cannot work there
+regardless of theming. The server warns at startup for any configured origin
+that fails this check.
+
+Be precise about what that costs, because the two halves are gated
+differently: **`getUserMedia` requires a secure context; `RTCPeerConnection`
+does not.** So on an insecure origin the video still negotiates and plays —
+you lose the microphone, not the stream. This is measured behaviour on a
+plain-http LAN origin, not a reading of the spec. An earlier version of this
+document claimed video would not connect either; that was wrong, and it
+matters, because "no WebRTC at all" would send you looking for a transport
+problem you do not have.
 
 ### Operator note: origins are normalised for you
 
@@ -230,6 +238,18 @@ this table without needing to reconstruct it by reading the page's CSS.
 | `--doorbell-font-display` | `sans-serif` | headings |
 | `--doorbell-font-mono` | `monospace` | stats/debug overlay, numerals |
 
+**If you are mapping these from an existing palette, check for collisions
+before you ship.** `--doorbell-accent` and `--doorbell-danger` sit next to
+each other in the sidebar — the quick replies against the TALK button — and
+nothing prevents a source palette from resolving both to the same value. A
+real case: an embedder took accent from a general palette slot and danger
+from an error role, and in one of its themes those were the same hex, so the
+replies and TALK rendered as one indistinguishable block. It was caught by
+testing the map across every theme rather than one. The same applies to
+`--doorbell-success`, which colours both the talking state and the playing
+state, and to `--doorbell-accent-text` needing contrast against whatever
+accent resolves to. The page cannot detect this; only your map can.
+
 Hover and "active" shades (e.g. the reply button hover state) are derived from
 these via `color-mix()` in the base sheet rather than exposed as separate
 variables.
@@ -261,7 +281,7 @@ legibility.
 |---|---|---|
 | `data-doorbell-state="loading\|connecting\|live\|error"` | root | connection lifecycle |
 | `data-doorbell-talk="on\|off"` | root | whether `?talk=0` hid the talk button |
-| `data-doorbell-reply-count="N"` | `[replies]` **and** root | number of replies currently loaded |
+| `data-doorbell-reply-count="N"` | `[replies]` **and** root | number of replies — **absent until known**, see below |
 | `data-doorbell-talking` | `[talk]` | present while transmitting |
 | `data-doorbell-muted` | `[mute]` | present while muted |
 | `data-doorbell-mic="denied"` | `[talk]` | mic permission refused |
@@ -300,7 +320,39 @@ Four rules are easy to violate by accident. All four are load-bearing.
    `data-doorbell-reply-count` (mirrored onto both `[replies]` and root) is
    there so you can vary layout *by* count, without ever hard-coding one.
 
-4. **State rules outrank a plain override while that state is active.** As
+   **The attribute is absent until the list resolves.** It is not `0` at load.
+   `0` means "we looked and there are none" — a claim the page cannot honestly
+   make before the fetch returns, and asserting it early would fire the
+   empty-state rules on every single load. So a selector keyed on
+   `[data-doorbell-reply-count="0"]` deliberately does not match during
+   loading, and any layout you write for the empty state must tolerate the
+   attribute simply not being there yet. On a fetch failure the count settles
+   to `0`, because at that point "nothing to show" is true.
+
+4. **Turning the layout axis means restating the sizing, not just the
+   direction.** The base sheet sizes `[sidebar]` and `[stage]` for a **row**:
+   the sidebar gets a fixed width and full height, the stage a full height.
+   Both are correct in a row and wrong in a column. An embed that sets
+   `flex-direction: column` on `[data-doorbell="layout"]` and changes nothing
+   else inherits the row sizing — the sidebar claims the full height and the
+   stage computes to **height 0**, so the video disappears entirely while the
+   controls survive in a narrow column beside it. It looks like a broken page
+   rather than a sizing mistake.
+
+   Restate both dimensions when you turn the axis:
+
+   ```css
+   [data-doorbell="layout"]  { flex-direction: column; }
+   [data-doorbell="sidebar"] { width: 100%; height: auto; }
+   [data-doorbell="stage"]   { width: 100%; }
+   ```
+
+   This is documented because neither side can see it alone: you cannot read
+   the base sheet's dimensions without inspecting a live page, and the page
+   cannot know which embedder will turn the axis. It was found by an embedder
+   doing exactly this and getting a black rectangle.
+
+5. **State rules outrank a plain override while that state is active.** As
    covered under *Protocol* above, eight base rules that express a state are
    two-attribute compounds, which are more specific than a bare one-attribute
    override — this is a class of gotcha, not a single one. The
