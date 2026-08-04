@@ -5,6 +5,7 @@ Usage:
   python3 test_dual_rtsp.py                    # just test connection
   python3 test_dual_rtsp.py chime-ding-dong.mp3  # connect and play audio file
 """
+
 import hashlib
 import os
 import random
@@ -74,7 +75,7 @@ def read_response(sock, buf=b""):
             length = struct.unpack(">H", buf[2:4])[0]
             while len(buf) < 4 + length:
                 buf += sock.recv(8192)
-            buf = buf[4 + length:]
+            buf = buf[4 + length :]
         else:
             break
 
@@ -86,7 +87,7 @@ def read_response(sock, buf=b""):
 
     header_end = buf.index(b"\r\n\r\n")
     header_data = buf[:header_end].decode()
-    buf = buf[header_end + 4:]
+    buf = buf[header_end + 4 :]
 
     lines = header_data.split("\r\n")
     status_line = lines[0]
@@ -115,7 +116,7 @@ def convert_to_pcmu(filepath):
         print(f"Loading raw PCMU: {filepath}")
         with open(filepath, "rb") as f:
             data = f.read()
-        print(f"Loaded: {len(data)} bytes ({len(data)/8000:.1f}s)")
+        print(f"Loaded: {len(data)} bytes ({len(data) / 8000:.1f}s)")
         return data
 
     print(f"Converting {filepath} to PCMU...")
@@ -140,21 +141,23 @@ def send_audio(sock, pcmu_data, bc_channel, ptime_ms=20):
     start = time.monotonic()
     packet_num = 0
 
-    print(f"Sending audio: {len(pcmu_data)} bytes, {len(pcmu_data)/8000:.1f}s, "
-          f"channel={bc_channel}, {samples_per_packet} samples/packet...")
+    print(
+        f"Sending audio: {len(pcmu_data)} bytes, {len(pcmu_data) / 8000:.1f}s, "
+        f"channel={bc_channel}, {samples_per_packet} samples/packet..."
+    )
 
     # Pre-build all RTP frames before sending for consistent timing
     frames = []
     while offset < len(pcmu_data):
-        chunk = pcmu_data[offset:offset + samples_per_packet]
+        chunk = pcmu_data[offset : offset + samples_per_packet]
         if len(chunk) < samples_per_packet:
             chunk += b"\xff" * (samples_per_packet - len(chunk))
 
         seq = (seq + 1) & 0xFFFF
         rtp_header = struct.pack(
             ">BBHII",
-            0x80,           # V=2
-            0 | 0,          # No marker, PT=0 (PCMU)
+            0x80,  # V=2
+            0 | 0,  # No marker, PT=0 (PCMU)
             seq,
             timestamp,
             ssrc,
@@ -212,10 +215,16 @@ def main():
 
     # DESCRIBE (expect 401, retry with auth)
     cseq += 1
-    send_request(sock, "DESCRIBE", BASE_URL, cseq, extra_headers={
-        "Accept": "application/sdp",
-        "Require": "www.onvif.org/ver20/backchannel",
-    })
+    send_request(
+        sock,
+        "DESCRIBE",
+        BASE_URL,
+        cseq,
+        extra_headers={
+            "Accept": "application/sdp",
+            "Require": "www.onvif.org/ver20/backchannel",
+        },
+    )
     status, headers, body, buf = read_response(sock, buf)
 
     if status == 401:
@@ -223,11 +232,17 @@ def main():
         realm, nonce = parse_auth_challenge(www_auth)
         cseq += 1
         auth_header = make_digest_auth("DESCRIBE", BASE_URL, realm, nonce)
-        send_request(sock, "DESCRIBE", BASE_URL, cseq, extra_headers={
-            "Accept": "application/sdp",
-            "Require": "www.onvif.org/ver20/backchannel",
-            "Authorization": auth_header,
-        })
+        send_request(
+            sock,
+            "DESCRIBE",
+            BASE_URL,
+            cseq,
+            extra_headers={
+                "Accept": "application/sdp",
+                "Require": "www.onvif.org/ver20/backchannel",
+                "Authorization": auth_header,
+            },
+        )
         status, headers, body, buf = read_response(sock, buf)
 
     if status != 200:
@@ -262,7 +277,9 @@ def main():
 
     print(f"Found {len(tracks)} tracks:")
     for t in tracks:
-        print(f"  {t['kind']} {t['direction']} control={t.get('control', '?')} rtpmap={t.get('rtpmap', '?')}")
+        print(
+            f"  {t['kind']} {t['direction']} control={t.get('control', '?')} rtpmap={t.get('rtpmap', '?')}"
+        )
 
     # SETUP only the backchannel (sendonly) track — skip video/audio receive
     # to avoid TCP backpressure from unconsumed incoming data
@@ -285,8 +302,14 @@ def main():
     transport = "RTP/AVP/TCP;unicast;interleaved=0-1"
     auth_header = make_digest_auth("SETUP", track_url, realm, nonce)
     print(f"\nSETUP {control} only (backchannel)...")
-    send_request(sock, "SETUP", track_url, cseq, session=session,
-                 extra_headers={"Transport": transport, "Authorization": auth_header})
+    send_request(
+        sock,
+        "SETUP",
+        track_url,
+        cseq,
+        session=session,
+        extra_headers={"Transport": transport, "Authorization": auth_header},
+    )
     status, headers, body, buf = read_response(sock, buf)
     if status != 200:
         print(f"SETUP failed for {control}: {status}")
@@ -307,8 +330,14 @@ def main():
     # PLAY
     cseq += 1
     auth_header = make_digest_auth("PLAY", BASE_URL, realm, nonce)
-    send_request(sock, "PLAY", BASE_URL, cseq, session=session,
-                 extra_headers={"Authorization": auth_header})
+    send_request(
+        sock,
+        "PLAY",
+        BASE_URL,
+        cseq,
+        session=session,
+        extra_headers={"Authorization": auth_header},
+    )
     status, headers, body, buf = read_response(sock, buf)
     print(f"PLAY: {status}")
 
@@ -335,8 +364,14 @@ def main():
     cseq += 1
     try:
         auth_header = make_digest_auth("TEARDOWN", BASE_URL, realm, nonce)
-        send_request(sock, "TEARDOWN", BASE_URL, cseq, session=session,
-                     extra_headers={"Authorization": auth_header})
+        send_request(
+            sock,
+            "TEARDOWN",
+            BASE_URL,
+            cseq,
+            session=session,
+            extra_headers={"Authorization": auth_header},
+        )
     except Exception:
         pass
     sock.close()

@@ -9,6 +9,7 @@ Architecture:
                        | inject_chime()
                     cast-proxy server
 """
+
 import asyncio
 import hashlib
 import os
@@ -145,7 +146,7 @@ class AsyncRtspReader:
         if "content-length" in headers:
             cl = int(headers["content-length"])
             await self._fill(consumed + cl)
-            body = self._buf[consumed:consumed + cl]
+            body = self._buf[consumed : consumed + cl]
             consumed += cl
 
         self._buf = self._buf[consumed:]
@@ -155,8 +156,15 @@ class AsyncRtspReader:
 class RtspProxy:
     """RTSP proxy between go2rtc (downstream) and a Reolink doorbell (upstream)."""
 
-    def __init__(self, camera_host, camera_port, camera_user, camera_pass,
-                 camera_stream, listen_port=8554):
+    def __init__(
+        self,
+        camera_host,
+        camera_port,
+        camera_user,
+        camera_pass,
+        camera_stream,
+        listen_port=8554,
+    ):
         self.camera_host = camera_host
         self.camera_port = camera_port
         self.camera_user = camera_user
@@ -174,7 +182,9 @@ class RtspProxy:
         )
         print(f"RTSP proxy listening on port {self.listen_port}")
         print(f"  Camera: {self.camera_host}:{self.camera_port}/{self.camera_stream}")
-        print(f"  go2rtc should connect to: rtsp://localhost:{self.listen_port}/{self.camera_stream}")
+        print(
+            f"  go2rtc should connect to: rtsp://localhost:{self.listen_port}/{self.camera_stream}"
+        )
 
     async def stop(self):
         if self._active_session:
@@ -221,7 +231,9 @@ class RtspProxy:
         prev = self._active_session
         if prev is not None:
             if prev._chime_playing:
-                print("RTSP proxy: chime playing, waiting for it to finish before accepting new client")
+                print(
+                    "RTSP proxy: chime playing, waiting for it to finish before accepting new client"
+                )
                 await prev._chime_done.wait()
             print("RTSP proxy: closing previous session")
             await prev.close()
@@ -354,8 +366,10 @@ class ProxySession:
             url = self._rewrite_url_to_camera(parts[1])
             ds_cseq = headers.get("cseq", "1")
             ds_require = headers.get("require", "")
-            print(f"RTSP proxy: <- {method} {url} (CSeq {ds_cseq})"
-                  f"{f' Require: {ds_require}' if ds_require else ''}")
+            print(
+                f"RTSP proxy: <- {method} {url} (CSeq {ds_cseq})"
+                f"{f' Require: {ds_require}' if ds_require else ''}"
+            )
 
             try:
                 if method == "DESCRIBE":
@@ -386,25 +400,45 @@ class ProxySession:
 
         if self.realm and self.nonce:
             us_headers["Authorization"] = make_digest_auth(
-                "DESCRIBE", url, self.proxy.camera_user, self.proxy.camera_pass,
-                self.realm, self.nonce
+                "DESCRIBE",
+                url,
+                self.proxy.camera_user,
+                self.proxy.camera_pass,
+                self.realm,
+                self.nonce,
             )
 
-        self.us_writer.write(build_rtsp_request("DESCRIBE", url, self.us_cseq, us_headers))
+        self.us_writer.write(
+            build_rtsp_request("DESCRIBE", url, self.us_cseq, us_headers)
+        )
         await self.us_writer.drain()
-        status, resp_headers, resp_body = await self._read_upstream_response_sequential()
+        (
+            status,
+            resp_headers,
+            resp_body,
+        ) = await self._read_upstream_response_sequential()
 
         if status == 401:
             www_auth = resp_headers.get("www-authenticate", "")
             self.realm, self.nonce = parse_auth_challenge(www_auth)
             self.us_cseq += 1
             us_headers["Authorization"] = make_digest_auth(
-                "DESCRIBE", url, self.proxy.camera_user, self.proxy.camera_pass,
-                self.realm, self.nonce
+                "DESCRIBE",
+                url,
+                self.proxy.camera_user,
+                self.proxy.camera_pass,
+                self.realm,
+                self.nonce,
             )
-            self.us_writer.write(build_rtsp_request("DESCRIBE", url, self.us_cseq, us_headers))
+            self.us_writer.write(
+                build_rtsp_request("DESCRIBE", url, self.us_cseq, us_headers)
+            )
             await self.us_writer.drain()
-            status, resp_headers, resp_body = await self._read_upstream_response_sequential()
+            (
+                status,
+                resp_headers,
+                resp_body,
+            ) = await self._read_upstream_response_sequential()
 
         # Parse SDP tracks
         sdp = resp_body.decode("utf-8", errors="replace") if resp_body else ""
@@ -413,12 +447,16 @@ class ProxySession:
 
         fwd_headers = self._filter_response_headers(resp_headers)
         resp = build_rtsp_response(
-            status, "OK" if status == 200 else "Error", ds_cseq,
+            status,
+            "OK" if status == 200 else "Error",
+            ds_cseq,
             headers=fwd_headers,
             body=resp_body,
         )
-        print(f"RTSP proxy: -> DESCRIBE response {status}, "
-              f"headers={fwd_headers}, body={len(resp_body)}b")
+        print(
+            f"RTSP proxy: -> DESCRIBE response {status}, "
+            f"headers={fwd_headers}, body={len(resp_body)}b"
+        )
         self.ds_writer.write(resp)
         await self.ds_writer.drain()
 
@@ -433,8 +471,10 @@ class ProxySession:
         if cached:
             # Return cached response — see _setup_cache comment for why
             status, fwd_headers, resp_body = cached
-            print(f"RTSP proxy: SETUP {url.rstrip('/').split('/')[-1]} "
-                  f"(cached, skipping camera round-trip)")
+            print(
+                f"RTSP proxy: SETUP {url.rstrip('/').split('/')[-1]} "
+                f"(cached, skipping camera round-trip)"
+            )
         else:
             # First time seeing this (url, transport) — forward to camera
             self.us_cseq += 1
@@ -443,13 +483,23 @@ class ProxySession:
                 us_headers["Session"] = self.us_session
             if self.realm and self.nonce:
                 us_headers["Authorization"] = make_digest_auth(
-                    "SETUP", url, self.proxy.camera_user, self.proxy.camera_pass,
-                    self.realm, self.nonce
+                    "SETUP",
+                    url,
+                    self.proxy.camera_user,
+                    self.proxy.camera_pass,
+                    self.realm,
+                    self.nonce,
                 )
 
-            self.us_writer.write(build_rtsp_request("SETUP", url, self.us_cseq, us_headers))
+            self.us_writer.write(
+                build_rtsp_request("SETUP", url, self.us_cseq, us_headers)
+            )
             await self.us_writer.drain()
-            status, resp_headers, resp_body = await self._read_upstream_response_sequential()
+            (
+                status,
+                resp_headers,
+                resp_body,
+            ) = await self._read_upstream_response_sequential()
 
             if not self.us_session and "session" in resp_headers:
                 self.us_session = resp_headers["session"].split(";")[0]
@@ -468,19 +518,27 @@ class ProxySession:
                 track_id = url.rstrip("/").split("/")[-1]
                 track_info = self._sdp_tracks.get(track_id, {})
                 direction = track_info.get("direction", "?")
-                print(f"RTSP proxy: SETUP {track_id}: "
-                      f"ds ch {ds_rtp_ch}-{ds_rtcp_ch} <-> "
-                      f"us ch {us_rtp_ch}-{us_rtcp_ch} ({direction})")
+                print(
+                    f"RTSP proxy: SETUP {track_id}: "
+                    f"ds ch {ds_rtp_ch}-{ds_rtcp_ch} <-> "
+                    f"us ch {us_rtp_ch}-{us_rtcp_ch} ({direction})"
+                )
 
                 if direction == "sendonly":
                     self.bc_channel_downstream = ds_rtp_ch
                     self.bc_channel_upstream = us_rtp_ch
-                    print(f"RTSP proxy: backchannel detected! "
-                          f"ds={ds_rtp_ch} us={us_rtp_ch}")
+                    print(
+                        f"RTSP proxy: backchannel detected! "
+                        f"ds={ds_rtp_ch} us={us_rtp_ch}"
+                    )
 
             # Rewrite Transport header to reflect downstream channels
             fwd_headers = self._filter_response_headers(resp_headers)
-            if ds_rtp_ch is not None and us_rtp_ch is not None and "Transport" in fwd_headers:
+            if (
+                ds_rtp_ch is not None
+                and us_rtp_ch is not None
+                and "Transport" in fwd_headers
+            ):
                 fwd_headers["Transport"] = self._rewrite_transport_interleaved(
                     fwd_headers["Transport"], ds_rtp_ch, ds_rtcp_ch
                 )
@@ -490,7 +548,9 @@ class ProxySession:
                 self._setup_cache[cache_key] = (status, fwd_headers, resp_body)
 
         resp = build_rtsp_response(
-            status, "OK" if status == 200 else "Error", ds_cseq,
+            status,
+            "OK" if status == 200 else "Error",
+            ds_cseq,
             headers=fwd_headers,
             body=resp_body,
         )
@@ -505,8 +565,12 @@ class ProxySession:
             us_headers["Session"] = self.us_session
         if self.realm and self.nonce:
             us_headers["Authorization"] = make_digest_auth(
-                method, url, self.proxy.camera_user, self.proxy.camera_pass,
-                self.realm, self.nonce
+                method,
+                url,
+                self.proxy.camera_user,
+                self.proxy.camera_pass,
+                self.realm,
+                self.nonce,
             )
         for key in ("accept", "require", "range"):
             if key in ds_headers:
@@ -514,10 +578,16 @@ class ProxySession:
 
         self.us_writer.write(build_rtsp_request(method, url, self.us_cseq, us_headers))
         await self.us_writer.drain()
-        status, resp_headers, resp_body = await self._read_upstream_response_sequential()
+        (
+            status,
+            resp_headers,
+            resp_body,
+        ) = await self._read_upstream_response_sequential()
 
         resp = build_rtsp_response(
-            status, "OK" if status == 200 else "Error", ds_cseq,
+            status,
+            "OK" if status == 200 else "Error",
+            ds_cseq,
             headers=self._filter_response_headers(resp_headers),
             body=resp_body,
         )
@@ -601,12 +671,18 @@ class ProxySession:
             us_headers["Session"] = self.us_session
         if self.realm and self.nonce:
             us_headers["Authorization"] = make_digest_auth(
-                method, url, self.proxy.camera_user, self.proxy.camera_pass,
-                self.realm, self.nonce
+                method,
+                url,
+                self.proxy.camera_user,
+                self.proxy.camera_pass,
+                self.realm,
+                self.nonce,
             )
 
         async with self._us_write_lock:
-            self.us_writer.write(build_rtsp_request(method, url, self.us_cseq, us_headers))
+            self.us_writer.write(
+                build_rtsp_request(method, url, self.us_cseq, us_headers)
+            )
             await self.us_writer.drain()
 
         # The camera's response will arrive on the upstream connection and
@@ -642,8 +718,8 @@ class ProxySession:
 
     def _rewrite_url_to_camera(self, url):
         return re.sub(
-            r'rtsp://[^/]+/',
-            f'rtsp://{self.proxy.camera_host}:{self.proxy.camera_port}/',
+            r"rtsp://[^/]+/",
+            f"rtsp://{self.proxy.camera_host}:{self.proxy.camera_port}/",
             url,
         )
 
@@ -684,9 +760,10 @@ class ProxySession:
     def _rewrite_transport_interleaved(transport_str, rtp_ch, rtcp_ch):
         """Replace the interleaved= value in a Transport header."""
         import re
+
         new_val = f"interleaved={rtp_ch}-{rtcp_ch}"
         if "interleaved=" in transport_str:
-            return re.sub(r'interleaved=\d+-\d+', new_val, transport_str)
+            return re.sub(r"interleaved=\d+-\d+", new_val, transport_str)
         return f"{transport_str};{new_val}"
 
     def _filter_response_headers(self, headers):
@@ -716,23 +793,28 @@ class ProxySession:
                 packet_num = 0
 
                 duration = len(pcmu_data) / 8000
-                print(f"RTSP proxy: playing chime ({duration:.1f}s) "
-                      f"on us channel {self.bc_channel_upstream}")
+                print(
+                    f"RTSP proxy: playing chime ({duration:.1f}s) "
+                    f"on us channel {self.bc_channel_upstream}"
+                )
 
                 while offset < len(pcmu_data):
-                    chunk = pcmu_data[offset:offset + samples_per_packet]
+                    chunk = pcmu_data[offset : offset + samples_per_packet]
                     if len(chunk) < samples_per_packet:
                         chunk += b"\xff" * (samples_per_packet - len(chunk))
 
                     self._chime_seq = (self._chime_seq + 1) & 0xFFFF
                     rtp_header = struct.pack(
                         ">BBHII",
-                        0x80, 0,
+                        0x80,
+                        0,
                         self._chime_seq,
                         self._chime_timestamp,
                         self._chime_ssrc,
                     )
-                    self._chime_timestamp = (self._chime_timestamp + len(chunk)) & 0xFFFFFFFF
+                    self._chime_timestamp = (
+                        self._chime_timestamp + len(chunk)
+                    ) & 0xFFFFFFFF
 
                     rtp_packet = rtp_header + chunk
                     async with self._us_write_lock:

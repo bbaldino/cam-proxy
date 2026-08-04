@@ -3,6 +3,7 @@
 Kept separate from server2.py so it can be tested without importing aiohttp,
 pychromecast, and gtts.
 """
+
 import re
 
 DEFAULT_THEME_ORIGINS = "https://dashboard.baldino.me"

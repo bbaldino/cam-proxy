@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """HTTP + WebSocket proxy server for go2rtc with DashCast trigger."""
+
 import asyncio
 import json
 import os
@@ -51,6 +52,7 @@ async def ws_proxy(request):
 
     async with aiohttp.ClientSession() as session:
         async with session.ws_connect(target) as ws_server:
+
             async def forward_to_server():
                 async for msg in ws_client:
                     if msg.type == aiohttp.WSMsgType.TEXT:
@@ -72,9 +74,7 @@ async def ws_proxy(request):
                         break
 
             await asyncio.gather(
-                forward_to_server(),
-                forward_to_client(),
-                return_exceptions=True
+                forward_to_server(), forward_to_client(), return_exceptions=True
             )
 
     return ws_client
@@ -83,8 +83,9 @@ async def ws_proxy(request):
 async def http_proxy(request):
     """Proxy HTTP requests to go2rtc."""
     import time
+
     t0 = time.monotonic()
-    path = request.path[len("/api/go2rtc"):]
+    path = request.path[len("/api/go2rtc") :]
     target = f"http://{GO2RTC}{path}"
     if request.query_string:
         target += f"?{request.query_string}"
@@ -94,25 +95,24 @@ async def http_proxy(request):
     session = request.app["client_session"]
     try:
         async with session.request(
-            request.method, target,
+            request.method,
+            target,
             data=body if body else None,
-            headers={"Content-Type": request.content_type} if request.content_type else {}
+            headers={"Content-Type": request.content_type}
+            if request.content_type
+            else {},
         ) as resp:
             data = await resp.read()
             t2 = time.monotonic()
-            print(f"Proxy {request.method} {path} -> read body: {(t1-t0)*1000:.0f}ms, go2rtc: {(t2-t1)*1000:.0f}ms, total: {(t2-t0)*1000:.0f}ms")
+            print(
+                f"Proxy {request.method} {path} -> read body: {(t1 - t0) * 1000:.0f}ms, go2rtc: {(t2 - t1) * 1000:.0f}ms, total: {(t2 - t0) * 1000:.0f}ms"
+            )
             return web.Response(
-                body=data,
-                status=resp.status,
-                content_type=resp.content_type
+                body=data, status=resp.status, content_type=resp.content_type
             )
     except (aiohttp.ClientError, ConnectionError) as e:
         print(f"Proxy {request.method} {path} -> error: {e}")
         return web.Response(text=str(e), status=502)
-
-
-
-
 
 
 class CastManager:
@@ -121,8 +121,8 @@ class CastManager:
     DOORBELL_URL_MARKER = "webrtc-doorbell"
 
     def __init__(self):
-        self._casts = {}       # device_name -> cast object
-        self._dashcast = {}    # device_name -> DashCastController
+        self._casts = {}  # device_name -> cast object
+        self._dashcast = {}  # device_name -> DashCastController
         self._browser = None
         self._showing_doorbell = set()  # device names currently showing doorbell
         self._lock = asyncio.Lock()
@@ -138,7 +138,9 @@ class CastManager:
                 self._casts.pop(device, None)
                 self._dashcast.pop(device, None)
 
-        chromecasts, browser = pychromecast.get_listed_chromecasts(friendly_names=[device])
+        chromecasts, browser = pychromecast.get_listed_chromecasts(
+            friendly_names=[device]
+        )
         if self._browser:
             self._browser.stop_discovery()
         self._browser = browser
@@ -221,14 +223,27 @@ def save_json(path, data):
 
 
 def slugify(text):
-    return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')[:50]
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:50]
 
 
 def convert_to_pcmu(mp3_path, pcmu_path):
     """Convert an MP3 file to raw PCMU (G.711 mu-law) 8kHz mono."""
     import subprocess
+
     result = subprocess.run(
-        ["ffmpeg", "-y", "-i", mp3_path, "-f", "mulaw", "-ar", "8000", "-ac", "1", pcmu_path],
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            mp3_path,
+            "-f",
+            "mulaw",
+            "-ar",
+            "8000",
+            "-ac",
+            "1",
+            pcmu_path,
+        ],
         capture_output=True,
     )
     if result.returncode != 0:
@@ -259,7 +274,7 @@ async def list_messages(request):
     meta = load_json(MESSAGES_META, {})
     messages = []
     for f in sorted(os.listdir(AUDIO_DIR)):
-        if f.endswith('.mp3'):
+        if f.endswith(".mp3"):
             msg_id = f[:-4]
             messages.append(get_message_info(msg_id, meta))
     return web.json_response(messages)
@@ -332,7 +347,9 @@ async def set_slots(request):
     return web.json_response([get_message_info(s, meta) for s in valid])
 
 
-CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+CORS_ORIGINS = [
+    o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()
+]
 
 
 @web.middleware
@@ -366,7 +383,9 @@ def ensure_chime_pcmu(chime_id):
 
 def list_chime_files():
     """Discover available chime sounds from the chimes directory."""
-    return sorted(os.path.splitext(f)[0] for f in os.listdir(CHIMES_DIR) if f.endswith(".mp3"))
+    return sorted(
+        os.path.splitext(f)[0] for f in os.listdir(CHIMES_DIR) if f.endswith(".mp3")
+    )
 
 
 async def list_chimes(request):
@@ -375,12 +394,14 @@ async def list_chimes(request):
     for name in list_chime_files():
         has_mp3 = os.path.exists(os.path.join(CHIMES_DIR, f"{name}.mp3"))
         has_pcmu = os.path.exists(os.path.join(CHIMES_DIR, f"{name}.pcmu"))
-        chimes.append({
-            "id": name,
-            "name": name.replace("-", " ").replace("_", " ").title(),
-            "has_mp3": has_mp3,
-            "has_pcmu": has_pcmu,
-        })
+        chimes.append(
+            {
+                "id": name,
+                "name": name.replace("-", " ").replace("_", " ").title(),
+                "has_mp3": has_mp3,
+                "has_pcmu": has_pcmu,
+            }
+        )
     return web.json_response(chimes)
 
 
@@ -466,6 +487,7 @@ async def on_startup(app):
     # Start RTSP proxy if configured
     if CAMERA_HOST and CAMERA_STREAM:
         from rtsp_proxy import RtspProxy
+
         proxy = RtspProxy(
             camera_host=CAMERA_HOST,
             camera_port=CAMERA_PORT,
@@ -485,6 +507,7 @@ async def on_cleanup(app):
     proxy = app.get("rtsp_proxy")
     if proxy:
         await proxy.stop()
+
 
 DOORBELL_PAGE = os.path.join(SERVE_DIR, "webrtc-doorbell.html")
 
