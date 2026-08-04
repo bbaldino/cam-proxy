@@ -13,7 +13,6 @@ import socket
 import struct
 import subprocess
 import sys
-import time
 
 HOST = "192.168.2.8"
 PORT = 554
@@ -138,8 +137,6 @@ def send_audio(sock, pcmu_data, bc_channel, ptime_ms=20):
     timestamp = 0
     samples_per_packet = 8000 * ptime_ms // 1000  # 160 for 20ms
     offset = 0
-    start = time.monotonic()
-    packet_num = 0
 
     print(
         f"Sending audio: {len(pcmu_data)} bytes, {len(pcmu_data) / 8000:.1f}s, "
