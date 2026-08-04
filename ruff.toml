@@ -1,0 +1,42 @@
+# Canonical ruff config. Copy verbatim to the repo root.
+#
+# This file existing is the point. Run bare, ruff does not enforce "its
+# defaults" — it enforces whatever rule families that release happens to
+# enable, and the set moves between versions. Measured on cam-proxy with
+# ruff 0.16.1: no config reported 26 errors drawn from bandit, pylint,
+# flake8-simplify and flake8-async; the select below reported 7.
+#
+# line-length is ruff's own default and black-compatible. It is stated rather
+# than inherited so a future default change cannot silently reformat a repo.
+line-length = 88
+
+# ruff format rewrites Python code blocks inside Markdown by default. The gate
+# exists for the code that ships in the image; rewriting docs and historical
+# records is churn. Measured on one repo: without this, 199 of 536 reformatted
+# lines were plan documents nobody intended to touch.
+#
+# Remove this deliberately if you want doc snippets formatted. Do not discover
+# it on the first reformat.
+exclude = ["*.md"]
+
+[lint]
+# E4/E7/E9 + F are the core set: pyflakes plus the pycodestyle rules that
+# catch real errors rather than style opinions.
+#
+# I is import sorting. It replaces isort, it is uncontroversial, and import
+# order is the thing most likely to drift between files and between people.
+#
+# E501 (line-too-long) is DELIBERATELY absent, and that is why this says
+# E4/E7/E9 rather than plain "E". E501 lives in E5. The formatter already owns
+# line length, so linting it too only re-reports what `ruff format --check`
+# enforces — except on strings, comments and URLs the formatter cannot wrap,
+# where it fires on code that is already correctly formatted.
+#
+# Stated explicitly because it is otherwise invisible: widening this to "E"
+# looks like a harmless broadening and silently turns 7 findings into 25.
+# Measured on a real repo by the agent adopting it, not assumed.
+#
+# Wider families (SIM, B, UP, S) may be worth adopting later. Each expands the
+# one-time cleanup, so each should be a measured decision rather than a default
+# nobody chose.
+select = ["E4", "E7", "E9", "F", "I"]
