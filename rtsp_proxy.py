@@ -18,7 +18,6 @@ import re
 import struct
 import subprocess
 
-
 AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audio")
 
 
@@ -327,14 +326,14 @@ class ProxySession:
             print(f"RTSP proxy: can't connect to camera: {e}")
             return
 
-        print(f"RTSP proxy: connected to camera")
+        print("RTSP proxy: connected to camera")
 
         # Phase 1: RTSP negotiation (sequential)
         play_received = await self._negotiate()
         if not play_received:
             return
 
-        print(f"RTSP proxy: negotiation complete, starting data forwarding")
+        print("RTSP proxy: negotiation complete, starting data forwarding")
 
         # Phase 2: Bidirectional data forwarding
         try:

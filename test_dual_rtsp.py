@@ -354,7 +354,7 @@ def main():
     print(f"\nConnected! Backchannel on channel {bc_channel}")
 
     if pcmu_data:
-        print(f"\nPlaying audio...")
+        print("\nPlaying audio...")
         send_audio(sock, pcmu_data, bc_channel)
     else:
         print("No audio file specified. Use: python3 test_dual_rtsp.py <file.mp3>")
