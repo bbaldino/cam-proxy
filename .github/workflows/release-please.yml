@@ -3,6 +3,11 @@ name: release-please
 on:
   push:
     branches: [main]
+  # Added so the gate's blocking behaviour can be exercised against a branch
+  # without pushing a knowingly-red commit to main. Neither this workflow nor
+  # publish-image triggers on branch pushes, so without a dispatch there is no
+  # way to prove the release path refuses except by breaking main.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,7 +21,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   release-please:
+    # Gating publish-image alone would let a red commit still be tagged and
+    # released — a GitHub Release marked "Latest" for a version with no image,
+    # and nothing reporting it. A red gate must stop the release PR opening at
+    # all, so no tag is ever cut.
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - id: release

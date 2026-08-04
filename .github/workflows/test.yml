@@ -1,0 +1,39 @@
+name: test
+
+# Reusable. Called by BOTH publish-image.yml and release-please.yml.
+#
+# Gating only publish-image is not enough and fails in a way that is visible
+# outside the repo: the two workflows are independent — different triggers,
+# different concurrency groups, neither waits for the other. So with the gate
+# only on publish, a red commit produces no image, while the release workflow
+# gates on nothing, opens and auto-merges the release PR, tags it, and
+# publishes a GitHub Release marked "Latest" for a version that has no image.
+on:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches the Dockerfile's python:3.12-slim base.
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      # requirements-dev.txt alone is deliberately sufficient. The suite imports
+      # only pytest and theme_origins, and theme_origins imports only `re` — it
+      # is kept free of aiohttp/pychromecast/gtts precisely so the gate does not
+      # need the runtime stack installed to run.
+      - run: pip install -r requirements-dev.txt
+
+      # --check fails rather than rewriting. Config is ruff.toml at the repo
+      # root; the pinned version in requirements-dev.txt matters because ruff's
+      # rule selection moves between releases.
+      - run: ruff format --check .
+      - run: ruff check .
+
+      - run: pytest
